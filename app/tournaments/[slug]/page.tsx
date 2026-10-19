@@ -178,7 +178,7 @@ export default function TournamentDetailPage() {
   };
 
   const isUserConfirmed = userRegistration?.status === 'confirmed';
-  const showRoomDetails = (isUserConfirmed || currentUser?.role === 'admin') && tournament.room_released;
+  const showRoomDetails = isUserConfirmed && Boolean(tournament.room_id);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-8">

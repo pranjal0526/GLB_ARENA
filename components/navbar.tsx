@@ -6,22 +6,18 @@ import { usePathname } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { 
   Trophy, 
-  Shield, 
-  User, 
   Menu, 
   X, 
   Flame, 
   LogOut, 
   Zap, 
-  CheckCircle2, 
-  SlidersHorizontal 
+  User 
 } from 'lucide-react';
 
 export function Navbar() {
   const pathname = usePathname();
-  const { currentUser, isAdmin, signOut, loginAs } = useAuth();
+  const { currentUser, signOut } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [roleSwitcherOpen, setRoleSwitcherOpen] = useState(false);
 
   const isActive = (path: string) => {
     if (path === '/') return pathname === '/';
@@ -50,7 +46,7 @@ export function Navbar() {
               </div>
             </Link>
 
-            {/* Desktop Navigation Links */}
+            {/* Public Player Navigation Links */}
             <div className="hidden md:flex items-center gap-1">
               <Link
                 href="/tournaments"
@@ -85,72 +81,13 @@ export function Navbar() {
                   My Hub
                 </Link>
               )}
-              {isAdmin && (
-                <Link
-                  href="/admin"
-                  className={`px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-1.5 ${
-                    isActive('/admin')
-                      ? 'text-rose-400 bg-rose-950/40 border border-rose-500/30'
-                      : 'text-rose-300 hover:text-rose-200 hover:bg-rose-950/20'
-                  }`}
-                >
-                  <Shield className="w-4 h-4" />
-                  Admin Panel
-                </Link>
-              )}
             </div>
           </div>
 
-          {/* User Controls & Demo Switcher */}
+          {/* User Controls */}
           <div className="hidden md:flex items-center gap-3">
-            {/* Quick Demo Role Switcher for Pair-programming & Evaluation */}
-            <div className="relative">
-              <button
-                onClick={() => setRoleSwitcherOpen(!roleSwitcherOpen)}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-mono bg-surface-100 border border-surface-border hover:border-brand-500/50 text-gray-300 hover:text-white transition-all"
-                title="Switch test persona"
-              >
-                <SlidersHorizontal className="w-3.5 h-3.5 text-cyanAccent-400" />
-                <span>Switch Persona: <strong className="text-white">{isAdmin ? 'Admin' : 'Player'}</strong></span>
-              </button>
-
-              {roleSwitcherOpen && (
-                <div className="absolute right-0 mt-2 w-64 bg-surface-100 border border-surface-border rounded-xl shadow-2xl p-2 z-50">
-                  <div className="px-3 py-2 text-xs font-semibold text-gray-400 border-b border-surface-border">
-                    Select Test Account:
-                  </div>
-                  <button
-                    onClick={() => {
-                      loginAs('p-player-01');
-                      setRoleSwitcherOpen(false);
-                    }}
-                    className="w-full text-left px-3 py-2 text-xs rounded-lg hover:bg-surface-50 flex items-center justify-between text-gray-200 mt-1"
-                  >
-                    <div>
-                      <div className="font-semibold text-white">Naman (Mortal)</div>
-                      <div className="text-[10px] text-emerald-400">Player • Rating 1420</div>
-                    </div>
-                    {currentUser?.id === 'p-player-01' && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
-                  </button>
-                  <button
-                    onClick={() => {
-                      loginAs('p-admin-01');
-                      setRoleSwitcherOpen(false);
-                    }}
-                    className="w-full text-left px-3 py-2 text-xs rounded-lg hover:bg-surface-50 flex items-center justify-between text-gray-200 mt-1"
-                  >
-                    <div>
-                      <div className="font-semibold text-white">VYROX Admin</div>
-                      <div className="text-[10px] text-rose-400">Admin • Full Privileges</div>
-                    </div>
-                    {currentUser?.id === 'p-admin-01' && <CheckCircle2 className="w-4 h-4 text-rose-400" />}
-                  </button>
-                </div>
-              )}
-            </div>
-
             {currentUser ? (
-              <div className="flex items-center gap-3 pl-2 border-l border-surface-border">
+              <div className="flex items-center gap-3">
                 <Link
                   href="/profile"
                   className="flex items-center gap-2.5 px-3 py-1.5 rounded-lg bg-surface-100 border border-surface-border hover:border-brand-500/50 transition-all group"
@@ -224,56 +161,50 @@ export function Navbar() {
           >
             Leaderboard
           </Link>
-          {currentUser && (
-            <Link
-              href="/dashboard"
-              onClick={() => setMobileMenuOpen(false)}
-              className="block px-3 py-2 rounded-md text-base font-medium text-gray-200 hover:bg-surface-50"
-            >
-              My Hub
-            </Link>
-          )}
-          {isAdmin && (
-            <Link
-              href="/admin"
-              onClick={() => setMobileMenuOpen(false)}
-              className="block px-3 py-2 rounded-md text-base font-medium text-rose-400 bg-rose-950/20 hover:bg-rose-950/40"
-            >
-              Admin Panel
-            </Link>
-          )}
-
-          <div className="pt-4 border-t border-surface-border">
-            <div className="text-xs text-gray-400 uppercase font-mono mb-2">Switch Test Account</div>
-            <div className="flex gap-2">
+          {currentUser ? (
+            <>
+              <Link
+                href="/dashboard"
+                onClick={() => setMobileMenuOpen(false)}
+                className="block px-3 py-2 rounded-md text-base font-medium text-gray-200 hover:bg-surface-50"
+              >
+                My Hub
+              </Link>
+              <Link
+                href="/profile"
+                onClick={() => setMobileMenuOpen(false)}
+                className="block px-3 py-2 rounded-md text-base font-medium text-gray-200 hover:bg-surface-50"
+              >
+                Profile ({currentUser.display_name})
+              </Link>
               <button
                 onClick={() => {
-                  loginAs('p-player-01');
+                  signOut();
                   setMobileMenuOpen(false);
                 }}
-                className={`flex-1 py-1.5 px-2 text-xs rounded border text-center ${
-                  currentUser?.id === 'p-player-01'
-                    ? 'border-brand-500 bg-brand-950/50 text-white'
-                    : 'border-surface-border text-gray-400'
-                }`}
+                className="w-full text-left px-3 py-2 rounded-md text-base font-medium text-rose-400 hover:bg-surface-50"
               >
-                Player (Mortal)
+                Sign Out
               </button>
-              <button
-                onClick={() => {
-                  loginAs('p-admin-01');
-                  setMobileMenuOpen(false);
-                }}
-                className={`flex-1 py-1.5 px-2 text-xs rounded border text-center ${
-                  currentUser?.id === 'p-admin-01'
-                    ? 'border-rose-500 bg-rose-950/50 text-white'
-                    : 'border-surface-border text-gray-400'
-                }`}
+            </>
+          ) : (
+            <div className="pt-2 flex flex-col gap-2">
+              <Link
+                href="/auth/signin"
+                onClick={() => setMobileMenuOpen(false)}
+                className="block text-center py-2 rounded-lg bg-surface-100 text-sm font-semibold text-white"
               >
-                Admin (VYROX)
-              </button>
+                Sign In
+              </Link>
+              <Link
+                href="/auth/signup"
+                onClick={() => setMobileMenuOpen(false)}
+                className="block text-center py-2 rounded-lg bg-brand-600 text-sm font-semibold text-white"
+              >
+                Register
+              </Link>
             </div>
-          </div>
+          )}
         </div>
       )}
     </nav>

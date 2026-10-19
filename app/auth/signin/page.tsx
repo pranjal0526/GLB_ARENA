@@ -51,32 +51,7 @@ export default function SignInPage() {
           </p>
         </div>
 
-        {/* Quick Demo Sign-in buttons */}
-        <div className="p-4 rounded-2xl bg-surface-100 border border-surface-border space-y-2.5">
-          <div className="text-xs font-mono uppercase text-gray-400 font-semibold text-center">
-            Instant Test Persona Login:
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              onClick={() => {
-                loginAs('p-player-01');
-                router.push('/dashboard');
-              }}
-              className="py-2 px-3 rounded-lg bg-surface-200 hover:bg-surface-50 border border-surface-border text-xs font-mono text-emerald-400 text-center font-bold"
-            >
-              Sign In as Player (Mortal)
-            </button>
-            <button
-              onClick={() => {
-                loginAs('p-admin-01');
-                router.push('/admin');
-              }}
-              className="py-2 px-3 rounded-lg bg-surface-200 hover:bg-surface-50 border border-surface-border text-xs font-mono text-rose-400 text-center font-bold"
-            >
-              Sign In as Admin (VYROX)
-            </button>
-          </div>
-        </div>
+
 
         {/* Traditional Credentials Form */}
         <div className="p-6 md:p-8 rounded-3xl bg-surface-100 border border-surface-border shadow-2xl space-y-5">

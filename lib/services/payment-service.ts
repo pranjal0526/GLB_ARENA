@@ -1,5 +1,5 @@
 import { Payment, PaymentStatus } from '../supabase/types';
-import { getStore } from './store';
+import { getStore, persistStore } from './store';
 import { logAdminAction } from './audit-service';
 
 export interface SubmitPaymentInput {
@@ -61,6 +61,7 @@ export async function submitUpiPayment(input: SubmitPaymentInput): Promise<{
   reg.payment = payment;
   reg.status = 'payment_submitted';
   reg.updated_at = new Date().toISOString();
+  persistStore(store);
 
   return { success: true, payment };
 }
@@ -125,6 +126,8 @@ export async function verifyPayment(
     captain.updated_at = new Date().toISOString();
   }
 
+  persistStore(store);
+
   await logAdminAction({
     actorId: adminId,
     action: 'PAYMENT_VERIFIED',
@@ -163,6 +166,8 @@ export async function rejectPayment(
   // Move registration to rejected state so user can resubmit with corrected UTR
   reg.status = 'rejected';
   reg.updated_at = new Date().toISOString();
+
+  persistStore(store);
 
   await logAdminAction({
     actorId: adminId,

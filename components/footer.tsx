@@ -56,11 +56,6 @@ export function Footer() {
                   Player Dashboard
                 </Link>
               </li>
-              <li>
-                <Link href="/admin" className="hover:text-brand-400 transition-colors">
-                  Organizer Portal
-                </Link>
-              </li>
             </ul>
           </div>
 

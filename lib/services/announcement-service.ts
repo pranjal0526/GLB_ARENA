@@ -1,5 +1,5 @@
 import { Announcement } from '../supabase/types';
-import { getStore } from './store';
+import { getStore, persistStore } from './store';
 import { logAdminAction } from './audit-service';
 
 export async function getAnnouncements(tournamentId?: string): Promise<Announcement[]> {
@@ -33,6 +33,7 @@ export async function createAnnouncement(
   };
 
   store.announcements.unshift(announcement);
+  persistStore(store);
 
   await logAdminAction({
     actorId: adminId,

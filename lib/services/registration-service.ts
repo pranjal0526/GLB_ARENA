@@ -1,5 +1,5 @@
 import { Registration, RegistrationStatus, RegistrationMember } from '../supabase/types';
-import { getStore } from './store';
+import { getStore, persistStore } from './store';
 import { logAdminAction } from './audit-service';
 
 export interface RegisterInput {
@@ -141,6 +141,8 @@ export async function registerForTournament(input: RegisterInput): Promise<{
     }
   }
 
+  persistStore(store);
+
   return {
     success: true,
     registration: {
@@ -163,6 +165,7 @@ export async function disqualifyParticipant(
   reg.status = 'disqualified';
   reg.disqualification_reason = reason;
   reg.updated_at = new Date().toISOString();
+  persistStore(store);
 
   await logAdminAction({
     actorId: adminId,

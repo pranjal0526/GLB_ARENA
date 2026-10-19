@@ -1,5 +1,5 @@
 import { Match, MatchParticipant, Registration } from '../supabase/types';
-import { getStore } from './store';
+import { getStore, persistStore } from './store';
 import { logAdminAction } from './audit-service';
 import { calculate1v1Elo, calculateBattleRoyaleRatingDelta, applyRatingEvent } from './rating-service';
 
@@ -123,6 +123,8 @@ export async function generateSingleEliminationFixtures(
     matchNumber++;
   }
 
+  persistStore(store);
+
   await logAdminAction({
     actorId: adminId,
     action: 'FIXTURES_GENERATED',
@@ -184,6 +186,7 @@ export async function generateBattleRoyaleLobby(
   };
 
   store.matches.push(match);
+  persistStore(store);
 
   await logAdminAction({
     actorId: adminId,
@@ -191,6 +194,115 @@ export async function generateBattleRoyaleLobby(
     targetEntity: 'matches',
     targetId: matchId,
     metadata: { tournament_id: tournamentId, participants_count: participants.length },
+  });
+
+  return { success: true, match };
+}
+
+/**
+ * Create Custom Match on Organizer Terms
+ * Allows setting exact round title, map, teams, room credentials
+ */
+export async function createCustomMatch(params: {
+  tournamentId: string;
+  roundLabel: string;
+  format?: string;
+  scheduledTime: string;
+  roomId?: string;
+  roomPassword?: string;
+  participantRegistrationIds?: string[];
+  adminId: string;
+}): Promise<{ success: boolean; match?: Match; error?: string }> {
+  const store = getStore();
+  const tournament = store.tournaments.find(t => t.id === params.tournamentId);
+  if (!tournament) return { success: false, error: 'Tournament not found' };
+
+  const matchId = `match-custom-${Date.now()}`;
+  
+  // Choose eligible or specified teams
+  const eligibleRegs = store.registrations.filter(
+    r => r.tournament_id === params.tournamentId && r.status === 'confirmed'
+  );
+  const targetRegs = params.participantRegistrationIds && params.participantRegistrationIds.length > 0
+    ? eligibleRegs.filter(r => params.participantRegistrationIds!.includes(r.id))
+    : eligibleRegs;
+
+  const participants: MatchParticipant[] = targetRegs.map((reg, idx) => ({
+    id: `mp-c-${Date.now()}-${idx + 1}`,
+    match_id: matchId,
+    registration_id: reg.id,
+    participant_slot: idx + 1,
+    kills: 0,
+    points: 0,
+    is_winner: false,
+    registration: reg,
+  }));
+
+  const match: Match = {
+    id: matchId,
+    tournament_id: params.tournamentId,
+    round_number: store.matches.filter(m => m.tournament_id === params.tournamentId).length + 1,
+    round_label: params.roundLabel,
+    match_number: 1,
+    format: params.format || tournament.tournament_format,
+    scheduled_time: params.scheduledTime || tournament.start_time,
+    status: 'scheduled',
+    room_id: params.roomId || tournament.room_id || '987123',
+    room_password: params.roomPassword || tournament.room_password || 'VYROX99',
+    room_released: Boolean(params.roomId && params.roomPassword) || tournament.room_released,
+    participants,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  store.matches.push(match);
+  persistStore(store);
+
+  await logAdminAction({
+    actorId: params.adminId,
+    action: 'CUSTOM_MATCH_CREATED',
+    targetEntity: 'matches',
+    targetId: matchId,
+    metadata: { label: params.roundLabel, participants: participants.length },
+  });
+
+  return { success: true, match };
+}
+
+/**
+ * Release or update Room Credentials for a specific match
+ */
+export async function releaseMatchRoomCredentials(
+  matchId: string,
+  roomId: string,
+  roomPassword: string,
+  adminId: string
+): Promise<{ success: boolean; match?: Match; error?: string }> {
+  const store = getStore();
+  const match = store.matches.find(m => m.id === matchId);
+  if (!match) return { success: false, error: 'Match not found' };
+
+  match.room_id = roomId;
+  match.room_password = roomPassword;
+  match.room_released = true;
+  match.updated_at = new Date().toISOString();
+
+  // Also sync to tournament default if not set
+  const tourney = store.tournaments.find(t => t.id === match.tournament_id);
+  if (tourney && !tourney.room_id) {
+    tourney.room_id = roomId;
+    tourney.room_password = roomPassword;
+    tourney.room_released = true;
+  }
+
+  persistStore(store);
+
+  await logAdminAction({
+    actorId: adminId,
+    action: 'MATCH_ROOM_RELEASED',
+    targetEntity: 'matches',
+    targetId: matchId,
+    metadata: { round: match.round_label, roomId },
   });
 
   return { success: true, match };
@@ -264,6 +376,7 @@ export async function recordMatchResults(
   match.status = 'completed';
   match.completed_at = new Date().toISOString();
   match.updated_at = new Date().toISOString();
+  persistStore(store);
 
   await logAdminAction({
     actorId: adminId,

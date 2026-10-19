@@ -1,5 +1,5 @@
 import { Profile } from '../supabase/types';
-import { getStore } from './store';
+import { getStore, persistStore } from './store';
 import { logAdminAction } from './audit-service';
 
 export async function getProfile(userId: string): Promise<Profile | null> {
@@ -45,6 +45,7 @@ export async function updateProfile(
   if (data.bgmi_uid) profile.bgmi_uid = data.bgmi_uid;
   if (data.avatar_url) profile.avatar_url = data.avatar_url;
   profile.updated_at = new Date().toISOString();
+  persistStore(store);
 
   return profile;
 }
@@ -62,6 +63,7 @@ export async function banUser(
   profile.ban_reason = reason;
   profile.banned_at = new Date().toISOString();
   profile.updated_at = new Date().toISOString();
+  persistStore(store);
 
   await logAdminAction({
     actorId: adminId,
@@ -86,6 +88,7 @@ export async function unbanUser(
   profile.ban_reason = null;
   profile.banned_at = null;
   profile.updated_at = new Date().toISOString();
+  persistStore(store);
 
   await logAdminAction({
     actorId: adminId,

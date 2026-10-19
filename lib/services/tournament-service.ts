@@ -1,5 +1,5 @@
 import { Tournament, TournamentStatus, TournamentMode } from '../supabase/types';
-import { getStore } from './store';
+import { getStore, persistStore } from './store';
 import { logAdminAction } from './audit-service';
 
 export interface TournamentFilters {
@@ -98,6 +98,7 @@ export async function createTournament(
   };
 
   store.tournaments.unshift(newTournament);
+  persistStore(store);
 
   await logAdminAction({
     actorId: adminId,
@@ -126,6 +127,7 @@ export async function updateTournament(
   };
 
   store.tournaments[index] = updated;
+  persistStore(store);
 
   await logAdminAction({
     actorId: adminId,
@@ -153,6 +155,7 @@ export async function updateTournamentStatus(
     tournament.cancellation_reason = cancellationReason;
   }
   tournament.updated_at = new Date().toISOString();
+  persistStore(store);
 
   await logAdminAction({
     actorId: adminId,
@@ -179,6 +182,7 @@ export async function releaseRoomDetails(
   tournament.room_password = roomPassword;
   tournament.room_released = true;
   tournament.updated_at = new Date().toISOString();
+  persistStore(store);
 
   await logAdminAction({
     actorId: adminId,

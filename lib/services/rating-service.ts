@@ -1,5 +1,5 @@
 import { RatingEvent } from '../supabase/types';
-import { getStore } from './store';
+import { getStore, persistStore } from './store';
 
 /**
  * 1v1 / Head-to-Head Elo Calculator
@@ -89,6 +89,7 @@ export function applyRatingEvent(params: {
   store.ratingEvents.push(event);
   profile.current_rating = newRating;
   profile.updated_at = new Date().toISOString();
+  persistStore(store);
 
   return event;
 }

@@ -17,8 +17,7 @@ import {
   initialAuditLogs 
 } from '../supabase/mock-data';
 
-// Global state store for local/fallback execution
-interface VyroxStore {
+export interface VyroxStore {
   tournaments: Tournament[];
   profiles: Profile[];
   registrations: Registration[];
@@ -28,31 +27,62 @@ interface VyroxStore {
   ratingEvents: RatingEvent[];
 }
 
-// In-memory singleton state
-let globalStore: VyroxStore = {
-  tournaments: [...initialTournaments],
-  profiles: [...initialProfiles],
-  registrations: [...initialRegistrations],
-  matches: [...initialMatches],
-  announcements: [...initialAnnouncements],
-  auditLogs: [...initialAuditLogs],
+const STORAGE_KEY = 'vyrox_live_store_v2';
+
+// In-memory fallback
+let memoryStore: VyroxStore = {
+  tournaments: JSON.parse(JSON.stringify(initialTournaments)),
+  profiles: JSON.parse(JSON.stringify(initialProfiles)),
+  registrations: JSON.parse(JSON.stringify(initialRegistrations)),
+  matches: JSON.parse(JSON.stringify(initialMatches)),
+  announcements: JSON.parse(JSON.stringify(initialAnnouncements)),
+  auditLogs: JSON.parse(JSON.stringify(initialAuditLogs)),
   ratingEvents: [],
 };
 
 export const getStore = (): VyroxStore => {
-  return globalStore;
+  if (typeof window !== 'undefined') {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        memoryStore = parsed;
+        return memoryStore;
+      } else {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(memoryStore));
+      }
+    } catch {
+      // localStorage may fail in private mode
+    }
+  }
+  return memoryStore;
+};
+
+export const persistStore = (updatedStore?: VyroxStore) => {
+  if (updatedStore) {
+    memoryStore = updatedStore;
+  }
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(memoryStore));
+      window.dispatchEvent(new Event('vyrox_store_updated'));
+    } catch {
+      // ignore
+    }
+  }
 };
 
 export const resetStore = () => {
-  globalStore = {
-    tournaments: [...initialTournaments],
-    profiles: [...initialProfiles],
-    registrations: [...initialRegistrations],
-    matches: [...initialMatches],
-    announcements: [...initialAnnouncements],
-    auditLogs: [...initialAuditLogs],
+  memoryStore = {
+    tournaments: JSON.parse(JSON.stringify(initialTournaments)),
+    profiles: JSON.parse(JSON.stringify(initialProfiles)),
+    registrations: JSON.parse(JSON.stringify(initialRegistrations)),
+    matches: JSON.parse(JSON.stringify(initialMatches)),
+    announcements: JSON.parse(JSON.stringify(initialAnnouncements)),
+    auditLogs: JSON.parse(JSON.stringify(initialAuditLogs)),
     ratingEvents: [],
   };
+  persistStore();
 };
 
 export function isSupabaseConfigured(): boolean {
