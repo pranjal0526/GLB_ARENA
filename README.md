@@ -36,8 +36,9 @@ Before using sign-in or organizer tools, make sure `.env.local` contains the URL
    - `supabase/migrations/007_player_verification_and_event_deletion.sql`
    - `supabase/migrations/008_private_player_phone_numbers.sql`
    - `supabase/migrations/009_admin_team_match_and_verification_controls.sql`
+   - `supabase/migrations/010_signup_phone_capture.sql`
 
-   The first migration creates the tables and initial policies. The second adds Free Fire identities, transactional registration and payment actions, organizer operations, and access-checked room credential functions. The third adds the admin paid-entry switch and restricts participant rosters to the captain and organizer. The fourth updates profile creation for OAuth metadata. The fifth adds individual and team rankings, result-linked rating updates, permanent rating badges, prize award tracking, and avatar uploads. The sixth repairs duplicate Battle Royale match numbers and assigns the next number automatically when a lobby is created. The seventh adds private game-ID screenshot verification and audited deletion of archived events. The eighth stores phone numbers in a private table that only the player and authorized server-side admin actions can read. The ninth adds audited admin deletion for teams, archived matches, and rejected verification submissions. Run each migration once against a new project, in this order. For an existing project, run only migrations it has not already applied.
+   The first migration creates the tables and initial policies. The second adds Free Fire identities, transactional registration and payment actions, organizer operations, and access-checked room credential functions. The third adds the admin paid-entry switch and restricts participant rosters to the captain and organizer. The fourth updates profile creation for OAuth metadata. The fifth adds individual and team rankings, result-linked rating updates, permanent rating badges, prize award tracking, and avatar uploads. The sixth repairs duplicate Battle Royale match numbers and assigns the next number automatically when a lobby is created. The seventh adds private game-ID screenshot verification and audited deletion of archived events. The eighth stores phone numbers in a private table that only the player and authorized server-side admin actions can read. The ninth adds audited admin deletion for teams, archived matches, and rejected verification submissions. The tenth saves the required signup phone number into that private table and backfills any valid phone numbers already present in signup metadata. Run each migration once against a new project, in this order. For an existing project, run only migrations it has not already applied.
 
 5. To add sample tournaments and announcements, run `supabase/seed.sql` once. It adds BGMI and Free Fire tournament listings. Do not run it repeatedly; its sample tournament IDs are fixed.
 6. In Supabase **Authentication → URL Configuration**, set the Site URL to `http://localhost:3000` and add `http://localhost:3000/auth/callback` and your deployed site's `/auth/callback` URL to the redirect allow list. Email confirmation links return through this callback.
@@ -50,6 +51,8 @@ Before using sign-in or organizer tools, make sure `.env.local` contains the URL
    ```
 
    Open [http://localhost:3000](http://localhost:3000).
+
+Phone numbers are collected at signup and stored in `public.player_contact_details`, separately from public profiles and leaderboard data. Admins can view them from **Players & Anti-Cheat → Account history**. Existing players who have not saved a number must add it in their profile. Passwords are managed by Supabase Auth as secure hashes; neither admins nor the application can retrieve a player's plaintext password.
 
 ## Make the first organizer account
 

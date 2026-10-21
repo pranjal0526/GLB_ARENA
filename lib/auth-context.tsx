@@ -8,6 +8,7 @@ import { getProfile } from './services/profile-service';
 
 interface SignUpInput {
   email: string;
+  phoneNumber: string;
   password: string;
   username: string;
   displayName: string;
@@ -186,12 +187,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (data.username.trim().length < 3 || data.username.trim().length > 24 || !/^[a-zA-Z0-9_]+$/.test(data.username)) {
       return { success: false, error: 'Username must be 3–24 characters and use only letters, numbers, and underscores.' };
     }
-    if (data.password.length < 6 || data.displayName.trim().length < 2 || data.ign.trim().length < 2 || !/^\d{5,}$/.test(data.uid.trim())) {
-      return { success: false, error: 'Enter a valid password, display name, in-game name, and numeric player ID.' };
+    if (data.password.length < 6 || !/^\+?[0-9][0-9\s().-]{6,18}$/.test(data.phoneNumber.trim()) || data.displayName.trim().length < 2 || data.ign.trim().length < 2 || !/^\d{5,}$/.test(data.uid.trim())) {
+      return { success: false, error: 'Enter a valid phone number, password, display name, in-game name, and numeric player ID.' };
     }
     const metadata = {
       username: data.username.trim(),
       display_name: data.displayName.trim(),
+      phone_number: data.phoneNumber.trim(),
       ...(data.game === 'BGMI'
         ? { bgmi_ign: data.ign.trim(), bgmi_uid: data.uid.trim() }
         : { free_fire_ign: data.ign.trim(), free_fire_uid: data.uid.trim() }),

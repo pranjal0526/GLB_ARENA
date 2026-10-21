@@ -5,7 +5,27 @@ import React, { useEffect, useState } from 'react';
 interface PlayerHistory {
   contact: { phone_number: string; created_at: string; updated_at: string } | null;
   auth: { email: string | null; created_at: string; last_sign_in_at: string | null; providers: string[] };
-  profile: { id: string; created_at: string; updated_at: string; current_rating: number; highest_rating?: number; total_tournaments: number; total_wins: number; total_kills: number; account_status: string; ban_reason?: string | null };
+  profile: {
+    id: string;
+    username: string;
+    display_name: string;
+    avatar_url?: string | null;
+    bgmi_ign?: string | null;
+    bgmi_uid?: string | null;
+    free_fire_ign?: string | null;
+    free_fire_uid?: string | null;
+    role: string;
+    created_at: string;
+    updated_at: string;
+    current_rating: number;
+    highest_rating?: number;
+    total_tournaments: number;
+    total_wins: number;
+    total_kills: number;
+    account_status: string;
+    ban_reason?: string | null;
+    banned_at?: string | null;
+  };
   ratings: Array<{ id: string; description: string; previous_rating: number; rating_change: number; new_rating: number; created_at: string; match_id?: string | null; tournament_id?: string | null }>;
   registrations: Array<{ id: string; team_name?: string | null; registration_code: string; status: string; slot_number?: number | null; created_at: string; tournament?: { title: string; status: string } | null }>;
   team_entries: Array<{ id: string; ign: string; uid: string; role: string; created_at: string; registration?: { team_name?: string | null; status: string; tournament?: { title: string; status: string } | null } | null }>;
@@ -36,12 +56,26 @@ export function PlayerAccountDetails({ playerId }: { playerId: string }) {
   if (!history) return <p className="p-4 text-xs text-gray-400">Loading full account history…</p>;
 
   return <div className="space-y-5 rounded-xl border border-surface-border bg-surface-200/40 p-4 text-xs">
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      <div><div className="text-gray-500">Account ID</div><div className="mt-1 break-all font-mono text-gray-200">{history.profile.id}</div></div>
-      <div><div className="text-gray-500">Sign-in email</div><div className="mt-1 text-gray-200">{history.auth.email || 'Not available'}</div></div>
-      <div><div className="text-gray-500">Phone number</div><div className="mt-1 text-gray-200">{history.contact?.phone_number || 'Not added'}</div></div>
-      <div><div className="text-gray-500">Account created</div><div className="mt-1 text-gray-200">{dateText(history.auth.created_at)}</div></div>
-      <div><div className="text-gray-500">Last sign-in</div><div className="mt-1 text-gray-200">{dateText(history.auth.last_sign_in_at)}</div></div>
+    <section>
+      <h4 className="mb-3 font-bold text-white">Player account details</h4>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div><div className="text-gray-500">Display name</div><div className="mt-1 text-gray-200">{history.profile.display_name}</div></div>
+        <div><div className="text-gray-500">Username</div><div className="mt-1 text-gray-200">@{history.profile.username}</div></div>
+        <div><div className="text-gray-500">Account role / status</div><div className="mt-1 capitalize text-gray-200">{history.profile.role} / {history.profile.account_status}</div></div>
+        <div><div className="text-gray-500">Sign-in email</div><div className="mt-1 break-all text-gray-200">{history.auth.email || 'Not available'}</div></div>
+        <div><div className="text-gray-500">Phone number</div><div className="mt-1 text-gray-200">{history.contact?.phone_number || 'Not added'}</div></div>
+        <div><div className="text-gray-500">BGMI identity</div><div className="mt-1 text-gray-200">{history.profile.bgmi_ign || 'Not added'}{history.profile.bgmi_uid ? ` · ID ${history.profile.bgmi_uid}` : ''}</div></div>
+        <div><div className="text-gray-500">Free Fire identity</div><div className="mt-1 text-gray-200">{history.profile.free_fire_ign || 'Not added'}{history.profile.free_fire_uid ? ` · ID ${history.profile.free_fire_uid}` : ''}</div></div>
+        <div><div className="text-gray-500">Avatar URL</div><div className="mt-1 break-all text-gray-200">{history.profile.avatar_url || 'Not set'}</div></div>
+        <div><div className="text-gray-500">Account ID</div><div className="mt-1 break-all font-mono text-gray-200">{history.profile.id}</div></div>
+        <div><div className="text-gray-500">Account created</div><div className="mt-1 text-gray-200">{dateText(history.auth.created_at)}</div></div>
+        <div><div className="text-gray-500">Last sign-in</div><div className="mt-1 text-gray-200">{dateText(history.auth.last_sign_in_at)}</div></div>
+        <div><div className="text-gray-500">Last profile update</div><div className="mt-1 text-gray-200">{dateText(history.profile.updated_at)}</div></div>
+        {(history.profile.ban_reason || history.profile.banned_at) && <div><div className="text-gray-500">Account restriction</div><div className="mt-1 text-rose-300">{history.profile.ban_reason || 'No reason recorded'}{history.profile.banned_at ? ` · ${dateText(history.profile.banned_at)}` : ''}</div></div>}
+      </div>
+    </section>
+    <div className="rounded-lg border border-surface-border bg-surface-100 p-3 text-gray-300">
+      <span className="font-semibold text-white">Password security:</span> Supabase Auth stores a secure password hash. The password is never available in plaintext, including to admins.
     </div>
     <div className="flex flex-wrap gap-x-5 gap-y-2 text-gray-300">
       <span>Providers: {history.auth.providers.join(', ') || 'email'}</span>

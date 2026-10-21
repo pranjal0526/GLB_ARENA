@@ -1,6 +1,6 @@
 import React from 'react';
 import Link from 'next/link';
-import { Flame, ShieldCheck, CreditCard, Award } from 'lucide-react';
+import { Flame, ShieldCheck, CreditCard, Award, Heart } from 'lucide-react';
 import { SUPPORT_EMAIL } from '@/lib/config/support';
 
 export function Footer() {
@@ -92,9 +92,15 @@ export function Footer() {
         </div>
 
         <div className="mt-12 pt-8 border-t border-surface-border flex flex-col md:flex-row items-center justify-between gap-4">
-          <p className="text-xs text-gray-500 text-center md:text-left">
-            © {new Date().getFullYear()} VYROX Arena. All rights reserved. BGMI and Free Fire are trademarks of their respective owners. VYROX is an independent tournament platform.
-          </p>
+          <div className="space-y-2 text-center md:text-left">
+            <p className="flex items-center justify-center gap-1.5 text-xs text-gray-300 md:justify-start">
+              <Heart className="h-3.5 w-3.5 fill-rose-500 text-rose-500" aria-hidden="true" />
+              Made with love for Esports
+            </p>
+            <p className="text-xs text-gray-500">
+              © {new Date().getFullYear()} VYROX Arena. All rights reserved. BGMI and Free Fire are trademarks of their respective owners. VYROX is an independent tournament platform.
+            </p>
+          </div>
           <div className="flex gap-4 text-xs text-gray-400">
             <span>Server Time (IST)</span>
             <span className="text-emerald-400 font-mono">LIVE 24/7</span>

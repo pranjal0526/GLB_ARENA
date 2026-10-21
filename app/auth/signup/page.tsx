@@ -11,6 +11,7 @@ export default function SignUpPage() {
   const { signUp } = useAuth();
 
   const [email, setEmail] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
   const [password, setPassword] = useState('');
   const [username, setUsername] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -42,6 +43,11 @@ export default function SignUpPage() {
       return;
     }
 
+    if (!/^\+?[0-9][0-9\s().-]{6,18}$/.test(phoneNumber.trim())) {
+      setError('Enter a valid phone number, including your country code if needed.');
+      return;
+    }
+
     if (bgmiIgn.trim().length < 2 || displayName.trim().length < 2) {
       setError('Enter a display name and an in-game name with at least 2 characters.');
       return;
@@ -56,6 +62,7 @@ export default function SignUpPage() {
     try {
       const res = await signUp({
         email,
+        phoneNumber: phoneNumber.trim(),
         password,
         username: username.trim(),
         displayName: displayName.trim(),
@@ -131,7 +138,6 @@ export default function SignUpPage() {
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   required
-                  placeholder="mortal_viper"
                   className="w-full px-3.5 py-2.5 rounded-xl bg-surface-200 border border-surface-border text-white text-sm focus:border-brand-500 focus:outline-none font-mono"
                 />
               </div>
@@ -145,7 +151,6 @@ export default function SignUpPage() {
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
                   required
-                  placeholder="Naman Mathur"
                   className="w-full px-3.5 py-2.5 rounded-xl bg-surface-200 border border-surface-border text-white text-sm focus:border-brand-500 focus:outline-none"
                 />
               </div>
@@ -162,12 +167,29 @@ export default function SignUpPage() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
-                  placeholder="player@gmail.com"
                   className="w-full px-3.5 py-2.5 rounded-xl bg-surface-200 border border-surface-border text-white text-sm focus:border-brand-500 focus:outline-none"
                 />
                 <p className="mt-1 text-[10px] text-gray-500">
                   Email signup requires a confirmation link. Check your inbox after registering.
                 </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-mono uppercase text-gray-400 mb-1">
+                  Phone Number <span className="text-rose-400">*</span>
+                </label>
+                <input
+                  type="tel"
+                  inputMode="tel"
+                  autoComplete="tel"
+                  value={phoneNumber}
+                  onChange={(e) => setPhoneNumber(e.target.value)}
+                  required
+                  pattern="[+]?[0-9][0-9 ().-]{6,18}"
+                  maxLength={20}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-surface-200 border border-surface-border text-white text-sm focus:border-brand-500 focus:outline-none font-mono"
+                />
+                <p className="mt-1 text-[10px] text-gray-500">Kept private; only you and authorized admins can view it.</p>
               </div>
 
               <div>
@@ -181,7 +203,6 @@ export default function SignUpPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
-                  placeholder="••••••••"
                   className="w-full px-3.5 py-2.5 rounded-xl bg-surface-200 border border-surface-border text-white text-sm focus:border-brand-500 focus:outline-none"
                 />
               </div>
@@ -213,7 +234,7 @@ export default function SignUpPage() {
                     value={bgmiIgn}
                     onChange={(e) => setBgmiIgn(e.target.value)}
                     required
-                    placeholder={game === 'BGMI' ? 'SOUL_Mortal' : 'FreeFire_Player'}
+                    placeholder=""
                     className="w-full px-3 py-2 rounded-xl bg-surface-100 border border-surface-border text-white text-sm focus:border-cyanAccent-500 focus:outline-none"
                   />
                 </div>
@@ -227,7 +248,7 @@ export default function SignUpPage() {
                     value={bgmiUid}
                     onChange={(e) => setBgmiUid(e.target.value)}
                     required
-                    placeholder="Player ID"
+                    placeholder=""
                     className="w-full px-3 py-2 rounded-xl bg-surface-100 border border-surface-border text-white text-sm focus:border-cyanAccent-500 focus:outline-none font-mono"
                   />
                 </div>
