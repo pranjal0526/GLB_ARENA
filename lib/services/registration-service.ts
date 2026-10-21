@@ -12,6 +12,53 @@ export interface RegisterInput {
   teammates?: Array<{ ign: string; uid: string }>;
 }
 
+export interface TournamentTeamSummary {
+  registration_id: string;
+  team_name: string;
+  leader_name: string;
+  registration_status: RegistrationStatus;
+  member_count: number;
+  team_size: number;
+  is_my_team: boolean;
+  request_status: 'pending' | 'approved' | 'rejected' | 'cancelled' | null;
+}
+
+export interface TournamentTeamRequest {
+  request_id: string;
+  registration_id: string;
+  player_id: string;
+  display_name: string;
+  username: string;
+  game_ign: string | null;
+  game_uid: string | null;
+  created_at: string;
+}
+
+export interface TournamentTeamOverview {
+  teams: TournamentTeamSummary[];
+  requests: TournamentTeamRequest[];
+  my_team: null | {
+    registration_id: string;
+    team_name: string | null;
+    is_leader: boolean;
+    member_count: number;
+    team_size: number;
+    members: Array<{
+      player_id: string | null;
+      display_name: string | null;
+      username: string | null;
+      ign: string;
+      uid: string;
+      role: RegistrationMember['role'];
+    }>;
+  };
+}
+
+export interface TeamActionResult {
+  success: boolean;
+  error?: string;
+}
+
 async function attachRelatedData(rows: Registration[]): Promise<Registration[]> {
   if (!rows.length) return [];
   const supabase = createClient();
@@ -31,14 +78,35 @@ async function attachRelatedData(rows: Registration[]): Promise<Registration[]> 
     const list = members.get(member.registration_id) || [];
     list.push(member); members.set(member.registration_id, list);
   }
-  return rows.map((row) => ({ ...row, captain: profiles.get(row.captain_id), tournament: tournaments.get(row.tournament_id), members: members.get(row.id) || [] }));
+  const additionalProfileIds = [...new Set(
+    Array.from(members.values())
+      .flatMap((list) => list.map((member) => member.player_id))
+      .filter((id): id is string => Boolean(id) && !profiles.has(id))
+  )];
+  if (additionalProfileIds.length) {
+    const { data, error } = await supabase.from('profiles').select('id,username,display_name,avatar_url').in('id', additionalProfileIds);
+    if (error) throw error;
+    for (const profile of data || []) profiles.set(profile.id, profile as Profile);
+  }
+  return rows.map((row) => ({
+    ...row,
+    captain: profiles.get(row.captain_id),
+    tournament: tournaments.get(row.tournament_id),
+    members: (members.get(row.id) || []).map((member) => ({
+      ...member,
+      profile: member.player_id ? profiles.get(member.player_id) : undefined,
+    })),
+  }));
 }
 
 export async function getRegistrationsByTournament(tournamentId: string): Promise<Registration[]> {
   if (!isSupabaseConfigured()) {
     const store = getStore();
     return store.registrations.filter((r) => r.tournament_id === tournamentId).map((r) => ({
-      ...r, captain: store.profiles.find((p) => p.id === r.captain_id), tournament: store.tournaments.find((t) => t.id === r.tournament_id),
+      ...r,
+      captain: store.profiles.find((p) => p.id === r.captain_id),
+      tournament: store.tournaments.find((t) => t.id === r.tournament_id),
+      members: (r.members || []).map((member) => ({ ...member, profile: store.profiles.find((profile) => profile.id === member.player_id) })),
     }));
   }
   const { data, error } = await createClient().from('registrations').select('*').eq('tournament_id', tournamentId).order('created_at');
@@ -59,13 +127,84 @@ export async function getAllRegistrations(): Promise<Registration[]> {
 export async function getUserRegistrations(userId: string): Promise<Registration[]> {
   if (!isSupabaseConfigured()) {
     const store = getStore();
-    return store.registrations.filter((r) => r.captain_id === userId).map((r) => ({
+    return store.registrations.filter((r) => r.captain_id === userId || r.members?.some((member) => member.player_id === userId)).map((r) => ({
       ...r, captain: store.profiles.find((p) => p.id === r.captain_id), tournament: store.tournaments.find((t) => t.id === r.tournament_id),
     }));
   }
-  const { data, error } = await createClient().from('registrations').select('*').eq('captain_id', userId).order('created_at', { ascending: false });
+  const supabase = createClient();
+  const [captainResult, memberResult] = await Promise.all([
+    supabase.from('registrations').select('*').eq('captain_id', userId),
+    supabase.from('registration_members').select('registration_id').eq('player_id', userId),
+  ]);
+  if (captainResult.error) throw captainResult.error;
+  if (memberResult.error) throw memberResult.error;
+  const registrationIds = [...new Set([
+    ...(captainResult.data || []).map((registration) => registration.id),
+    ...(memberResult.data || []).map((member) => member.registration_id),
+  ])];
+  if (!registrationIds.length) return [];
+  const { data, error } = await supabase.from('registrations').select('*').in('id', registrationIds).order('created_at', { ascending: false });
   if (error) throw error;
   return attachRelatedData((data || []) as Registration[]);
+}
+
+export async function getTournamentTeamOverview(tournamentId: string, userId?: string): Promise<TournamentTeamOverview> {
+  if (isSupabaseConfigured()) {
+    const { data, error } = await createClient().rpc('get_tournament_team_overview', { p_tournament_id: tournamentId });
+    if (error) throw error;
+    return (data || { teams: [], requests: [], my_team: null }) as TournamentTeamOverview;
+  }
+
+  const store = getStore();
+  const tournament = store.tournaments.find((item) => item.id === tournamentId);
+  const teams = store.registrations
+    .filter((registration) => registration.tournament_id === tournamentId && registration.team_name && ['confirmed', 'payment_submitted', 'pending_payment'].includes(registration.status))
+    .map((registration) => ({
+      registration_id: registration.id,
+      team_name: registration.team_name || '',
+      leader_name: store.profiles.find((profile) => profile.id === registration.captain_id)?.display_name || 'Team leader',
+      registration_status: registration.status,
+      member_count: registration.members?.length || 0,
+      team_size: tournament?.team_size || 1,
+      is_my_team: registration.captain_id === userId || Boolean(registration.members?.some((member) => member.player_id === userId)),
+      request_status: null,
+    }));
+  const ownRegistration = store.registrations.find((registration) => registration.tournament_id === tournamentId && ['confirmed', 'payment_submitted', 'pending_payment'].includes(registration.status) && (registration.captain_id === userId || registration.members?.some((member) => member.player_id === userId)));
+  return {
+    teams,
+    requests: [],
+    my_team: ownRegistration ? {
+      registration_id: ownRegistration.id,
+      team_name: ownRegistration.team_name || null,
+      is_leader: ownRegistration.captain_id === userId,
+      member_count: ownRegistration.members?.length || 0,
+      team_size: tournament?.team_size || 1,
+      members: (ownRegistration.members || []).map((member) => {
+        const profile = store.profiles.find((item) => item.id === member.player_id);
+        return { player_id: member.player_id || null, display_name: profile?.display_name || null, username: profile?.username || null, ign: member.ign, uid: member.uid, role: member.role };
+      }),
+    } : null,
+  };
+}
+
+async function callTeamAction(functionName: string, args: Record<string, unknown>): Promise<TeamActionResult> {
+  if (!isSupabaseConfigured()) return { success: false, error: 'Team requests are available when the tournament database is connected.' };
+  const { data, error } = await createClient().rpc(functionName, args);
+  if (error) return { success: false, error: error.message };
+  const result = data as { success?: boolean; error?: string } | null;
+  return result?.success ? { success: true } : { success: false, error: result?.error || 'The team action could not be completed.' };
+}
+
+export function requestToJoinTournamentTeam(registrationId: string): Promise<TeamActionResult> {
+  return callTeamAction('request_to_join_tournament_team', { p_registration_id: registrationId });
+}
+
+export function reviewTournamentTeamRequest(requestId: string, approve: boolean): Promise<TeamActionResult> {
+  return callTeamAction('review_tournament_team_request', { p_request_id: requestId, p_approve: approve });
+}
+
+export function transferTournamentTeamLeadership(registrationId: string, newLeaderId: string): Promise<TeamActionResult> {
+  return callTeamAction('transfer_tournament_team_leadership', { p_registration_id: registrationId, p_new_leader_id: newLeaderId });
 }
 
 export async function getRegistrationById(id: string): Promise<Registration | null> {
@@ -81,11 +220,11 @@ export async function getRegistrationById(id: string): Promise<Registration | nu
 
 export async function registerForTournament(input: RegisterInput): Promise<{ success: boolean; registration?: Registration; error?: string }> {
   if (isSupabaseConfigured()) {
-    const members = [{ ign: input.ign.trim(), uid: input.uid.trim() }, ...(input.teammates || []).map((member) => ({ ign: member.ign.trim(), uid: member.uid.trim() }))];
+    const members = [{ ign: input.ign.trim(), uid: input.uid.trim() }];
     const { data, error } = await createClient().rpc('register_tournament_atomic', {
       p_tournament_id: input.tournamentId,
       p_captain_id: input.captainId,
-      p_team_name: input.teamName || input.ign,
+      p_team_name: input.teamName?.trim() || null,
       p_members: members,
     });
     if (error) return { success: false, error: error.message };
@@ -107,23 +246,19 @@ export async function registerForTournament(input: RegisterInput): Promise<{ suc
   const isFree = tournament.entry_fee_paise === 0;
   const id = `reg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
   const members: RegistrationMember[] = [{ id: `m-${Date.now()}-0`, registration_id: id, player_id: input.captainId, ign: input.ign, uid: input.uid, role: 'captain', created_at: new Date().toISOString() }];
-  (input.teammates || []).forEach((member, index) => {
-    const linkedProfile = store.profiles.find((profile) => tournament.game === 'BGMI'
-      ? profile.bgmi_uid === member.uid
-      : profile.free_fire_uid === member.uid);
-    members.push({ id: `m-${Date.now()}-${index + 1}`, registration_id: id, player_id: linkedProfile?.id, ign: member.ign, uid: member.uid, role: 'member', created_at: new Date().toISOString() });
-  });
   const registration: Registration = {
     id, tournament_id: input.tournamentId, captain_id: input.captainId,
-    team_name: input.teamName || input.ign,
+    team_name: tournament.team_size > 1 ? input.teamName?.trim() || null : null,
     registration_code: `VYR-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
     status: (isFree ? 'confirmed' : 'pending_payment') as RegistrationStatus,
     slot_number: active.length + 1, members,
     created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
   };
   store.registrations.push(registration);
-  const teamKey = `${tournament.game.toLowerCase()}:${(registration.team_name || input.ign).trim().toLowerCase()}`;
-  store.deletedTeams = (store.deletedTeams || []).filter((key) => key !== teamKey);
+  if (registration.team_name) {
+    const teamKey = `${tournament.game.toLowerCase()}:${registration.team_name.trim().toLowerCase()}`;
+    store.deletedTeams = (store.deletedTeams || []).filter((key) => key !== teamKey);
+  }
   persistStore(store);
   return { success: true, registration: { ...registration, captain: store.profiles.find((p) => p.id === input.captainId), tournament } };
 }

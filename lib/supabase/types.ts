@@ -135,6 +135,7 @@ export interface RegistrationMember {
   uid: string;
   role: 'captain' | 'member' | 'substitute';
   created_at: string;
+  profile?: Pick<Profile, 'id' | 'username' | 'display_name' | 'avatar_url'>;
 }
 
 export type PaymentStatus = 'pending' | 'submitted' | 'verified' | 'rejected';

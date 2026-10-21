@@ -13,7 +13,12 @@ import { getTournamentRoomCredentials } from '@/lib/services/tournament-service'
 import { 
   getRegistrationsByTournament,
   getUserRegistrations,
-  registerForTournament 
+  registerForTournament,
+  getTournamentTeamOverview,
+  requestToJoinTournamentTeam,
+  reviewTournamentTeamRequest,
+  transferTournamentTeamLeadership,
+  TournamentTeamOverview,
 } from '@/lib/services/registration-service';
 import { getMatchesByTournament } from '@/lib/services/fixture-service';
 import { useAuth } from '@/lib/auth-context';
@@ -53,6 +58,10 @@ export default function TournamentDetailPage() {
   const [registrations, setRegistrations] = useState<Registration[]>([]);
   const [matches, setMatches] = useState<Match[]>([]);
   const [userRegistration, setUserRegistration] = useState<Registration | null>(null);
+  const [teamOverview, setTeamOverview] = useState<TournamentTeamOverview | null>(null);
+  const [teamActionMessage, setTeamActionMessage] = useState<string | null>(null);
+  const [teamActionError, setTeamActionError] = useState<string | null>(null);
+  const [teamActionBusy, setTeamActionBusy] = useState<string | null>(null);
   const [roomCredentials, setRoomCredentials] = useState<{ room_id: string | null; room_password: string | null } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [paidRegistrationEnabled, setPaidRegistrationEnabled] = useState(false);
@@ -62,7 +71,6 @@ export default function TournamentDetailPage() {
   const [teamName, setTeamName] = useState('');
   const [ign, setIgn] = useState('');
   const [uid, setUid] = useState('');
-  const [teammates, setTeammates] = useState<Array<{ ign: string; uid: string }>>([]);
   const [regError, setRegError] = useState<string | null>(null);
   const [isSubmittingReg, setIsSubmittingReg] = useState(false);
 
@@ -91,16 +99,28 @@ export default function TournamentDetailPage() {
       }
 
       if (currentUser) {
-        const userReg = regs.find(r => r.captain_id === currentUser.id);
+        const userReg = regs.find(r => r.captain_id === currentUser.id || r.members?.some((member) => member.player_id === currentUser.id));
         setUserRegistration(userReg || null);
         if (userReg?.status === 'confirmed' || isAdmin) {
           setRoomCredentials(await getTournamentRoomCredentials(t.id));
         } else {
           setRoomCredentials(null);
         }
+        if (t.team_size > 1) {
+          try {
+            setTeamOverview(await getTournamentTeamOverview(t.id, currentUser.id));
+            setTeamActionError(null);
+          } catch (error) {
+            setTeamOverview(null);
+            setTeamActionError(error instanceof Error ? error.message : 'Could not load this tournament’s team list.');
+          }
+        } else {
+          setTeamOverview(null);
+        }
       } else {
         setUserRegistration(null);
         setRoomCredentials(null);
+        setTeamOverview(null);
       }
     }
     setIsLoading(false);
@@ -117,9 +137,6 @@ export default function TournamentDetailPage() {
       const playerUid = tournament?.game === 'Free Fire' ? currentUser.free_fire_uid : currentUser.bgmi_uid;
       if (playerIgn) setIgn(playerIgn);
       if (playerUid) setUid(playerUid);
-      if (tournament) {
-        setTeammates(Array.from({ length: Math.max(0, tournament.team_size - 1) }, () => ({ ign: '', uid: '' })));
-      }
     }
   }, [currentUser, tournament]);
 
@@ -163,6 +180,10 @@ export default function TournamentDetailPage() {
     : tournament.status === 'open' && registrationWindowHasClosed
       ? 'registration_closed'
       : tournament.status;
+  const isRegistrationLeader = Boolean(currentUser && userRegistration?.captain_id === currentUser.id);
+  const hasPendingTeamRequest = Boolean(teamOverview?.teams.some((team) => team.request_status === 'pending'));
+  const myTeam = teamOverview?.my_team || null;
+  const incomingTeamRequests = teamOverview?.requests || [];
 
   // Format dates in Asia/Kolkata
   const formatIst = (dateStr: string) => {
@@ -194,10 +215,9 @@ export default function TournamentDetailPage() {
       const res = await registerForTournament({
         tournamentId: tournament.id,
         captainId: currentUser.id,
-        teamName: teamName || ign,
+        teamName: tournament.team_size > 1 ? teamName : undefined,
         ign: ign.trim(),
         uid: uid.trim(),
-        teammates: teammates.filter(t => t.ign && t.uid),
       });
 
       if (!res.success) {
@@ -216,6 +236,25 @@ export default function TournamentDetailPage() {
       setRegError(err instanceof Error ? err.message : 'Registration failed');
     } finally {
       setIsSubmittingReg(false);
+    }
+  };
+
+  const runTeamAction = async (key: string, action: () => Promise<{ success: boolean; error?: string }>, successMessage: string) => {
+    setTeamActionBusy(key);
+    setTeamActionError(null);
+    setTeamActionMessage(null);
+    try {
+      const result = await action();
+      if (!result.success) {
+        setTeamActionError(result.error || 'The team action could not be completed.');
+        return;
+      }
+      setTeamActionMessage(successMessage);
+      await loadData();
+    } catch (error) {
+      setTeamActionError(error instanceof Error ? error.message : 'The team action could not be completed.');
+    } finally {
+      setTeamActionBusy(null);
     }
   };
 
@@ -296,7 +335,7 @@ export default function TournamentDetailPage() {
                     <StatusBadge status={userRegistration.status} size="sm" />
                   </div>
 
-                  {!isPastTournament && (userRegistration.status === 'pending_payment' || userRegistration.status === 'rejected') && (
+                  {!isPastTournament && isRegistrationLeader && (userRegistration.status === 'pending_payment' || userRegistration.status === 'rejected') && (
                     canUsePaidRegistration ? (
                       <button
                         onClick={() => setPaymentModalOpen(true)}
@@ -310,7 +349,7 @@ export default function TournamentDetailPage() {
                     )
                   )}
 
-                  {userRegistration.status === 'payment_submitted' && (
+                  {isRegistrationLeader && userRegistration.status === 'payment_submitted' && (
                     <div className="p-2.5 rounded-xl bg-violet-950/40 border border-violet-500/30 text-[11px] text-violet-300 text-center font-mono">
                       UTR submitted. Your entry will be confirmed once payment is verified.
                     </div>
@@ -322,6 +361,15 @@ export default function TournamentDetailPage() {
                       <span>Confirmed • Slot #{userRegistration.slot_number || 1}</span>
                     </div>
                   )}
+                  {!isRegistrationLeader && (
+                    <div className="p-2.5 rounded-xl bg-cyanAccent-950/20 border border-cyanAccent-500/30 text-[11px] text-cyanAccent-200 text-center font-mono">
+                      You are on {userRegistration.team_name || 'this tournament team'}’s roster. The team leader handles the entry payment.
+                    </div>
+                  )}
+                </div>
+              ) : hasPendingTeamRequest ? (
+                <div className="p-2.5 rounded-xl bg-violet-950/40 border border-violet-500/30 text-[11px] text-violet-300 text-center font-mono">
+                  Your request to join a team is waiting for its leader.
                 </div>
               ) : registrationCanStart && canUsePaidRegistration ? (
                 <button
@@ -329,7 +377,7 @@ export default function TournamentDetailPage() {
                   className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-brand-600 to-cyanAccent-600 hover:from-brand-500 hover:to-cyanAccent-500 text-white font-bold text-sm uppercase tracking-wider shadow-glow hover:shadow-glow-cyan transition-all flex items-center justify-center gap-2"
                 >
                   <Swords className="w-4 h-4" />
-                  <span>Join Tournament</span>
+                  <span>{tournament.team_size > 1 ? 'Create a Team' : 'Join as Solo Player'}</span>
                 </button>
               ) : registrationCanStart ? (
                 <div className="p-2.5 rounded-xl border border-amber-500/30 bg-amber-950/20 text-center text-xs font-mono text-amber-300">
@@ -399,11 +447,105 @@ export default function TournamentDetailPage() {
             <div className="text-xs font-mono text-gray-400">
               {isUserConfirmed 
                 ? 'Credentials will unlock 15 minutes before the match start time.' 
-                : 'Confirm your squad registration to receive lobby credentials.'}
+                : 'Confirm your registration to receive lobby credentials.'}
             </div>
           )}
         </div>
       </div>
+
+      {tournament.team_size > 1 && (
+        <section className="p-6 md:p-8 rounded-3xl bg-surface-100 border border-surface-border space-y-5">
+          <div>
+            <h2 className="font-display font-bold text-xl text-white">Tournament teams</h2>
+            <p className="mt-1 text-sm text-gray-400">Create a team for this event, then let players request to join. The leader approves the roster and can transfer leadership. You may join a different team in another tournament, but only one team in this event.</p>
+          </div>
+
+          {teamActionError && <div role="alert" className="rounded-xl border border-rose-500/30 bg-rose-950/20 px-4 py-3 text-sm text-rose-300">{teamActionError}</div>}
+          {teamActionMessage && <div role="status" className="rounded-xl border border-emerald-500/30 bg-emerald-950/20 px-4 py-3 text-sm text-emerald-300">{teamActionMessage}</div>}
+
+          {!currentUser ? (
+            <p className="text-sm text-gray-400">Sign in to view teams or send a join request.</p>
+          ) : myTeam ? (
+            <div className="rounded-2xl border border-cyanAccent-500/30 bg-surface-200/50 p-4 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="font-bold text-white">Your team: {myTeam.team_name || 'Tournament entry'}</h3>
+                  <p className="text-xs text-gray-400 mt-1">{myTeam.member_count} of {myTeam.team_size} roster spots filled · {myTeam.is_leader ? 'You are the leader' : 'Your leader manages requests and payment'}</p>
+                </div>
+                <span className="px-2.5 py-1 rounded-full text-[10px] font-mono uppercase text-cyanAccent-300 bg-cyanAccent-950/40 border border-cyanAccent-500/30">{userRegistration?.status || 'registered'}</span>
+              </div>
+              <div className="space-y-2">
+                {myTeam.members.map((member) => (
+                  <div key={`${member.player_id || member.uid}-${member.role}`} className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-surface-100 px-3 py-2.5">
+                    <div>
+                      <div className="text-sm font-semibold text-white">{member.display_name || member.ign}{member.role === 'captain' ? ' · Leader' : ''}</div>
+                      <div className="text-xs text-gray-400 font-mono">{member.ign} · ID {member.uid}</div>
+                    </div>
+                    {myTeam.is_leader && member.player_id && member.player_id !== currentUser.id && (
+                      <button
+                        type="button"
+                        disabled={Boolean(teamActionBusy)}
+                        onClick={() => runTeamAction(`leader-${member.player_id}`, () => transferTournamentTeamLeadership(myTeam.registration_id, member.player_id!), `Leadership transferred to ${member.display_name || member.ign}.`)}
+                        className="rounded-lg border border-surface-border px-3 py-2 text-xs text-gray-300 hover:border-brand-500 hover:text-white disabled:opacity-50"
+                      >
+                        Make leader
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {myTeam.is_leader && incomingTeamRequests.length > 0 && (
+                <div className="border-t border-surface-border pt-4 space-y-3">
+                  <h4 className="text-sm font-bold text-white">Join requests ({incomingTeamRequests.length})</h4>
+                  {incomingTeamRequests.map((request) => (
+                    <div key={request.request_id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-surface-100 px-3 py-3">
+                      <div>
+                        <div className="text-sm font-semibold text-white">{request.display_name} <span className="text-gray-500 font-normal">@{request.username}</span></div>
+                        <div className="text-xs text-gray-400 font-mono">{request.game_ign} · ID {request.game_uid}</div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button type="button" disabled={Boolean(teamActionBusy)} onClick={() => runTeamAction(`approve-${request.request_id}`, () => reviewTournamentTeamRequest(request.request_id, true), `${request.display_name} joined your team.`)} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-600 disabled:opacity-50">Approve</button>
+                        <button type="button" disabled={Boolean(teamActionBusy)} onClick={() => runTeamAction(`decline-${request.request_id}`, () => reviewTournamentTeamRequest(request.request_id, false), `Request from ${request.display_name} declined.`)} className="rounded-lg border border-rose-500/40 px-3 py-2 text-xs font-semibold text-rose-300 hover:bg-rose-950/30 disabled:opacity-50">Decline</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <>
+              {!teamOverview && !teamActionError && <p className="text-sm text-gray-400">Loading tournament teams…</p>}
+              {teamOverview?.teams.length === 0 && <p className="text-sm text-gray-400">No teams have been created for this tournament yet.</p>}
+              {teamOverview?.teams.map((team) => {
+                const requestIsPending = team.request_status === 'pending';
+                const canRequest = registrationCanStart && !team.is_my_team && !hasPendingTeamRequest && team.member_count < team.team_size;
+                return (
+                  <div key={team.registration_id} className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-surface-border bg-surface-200/40 p-4">
+                    <div>
+                      <h3 className="font-bold text-white">{team.team_name}</h3>
+                      <p className="mt-1 text-xs text-gray-400">Leader: {team.leader_name} · {team.member_count}/{team.team_size} players · {team.registration_status.replace('_', ' ')}</p>
+                    </div>
+                    {team.is_my_team ? (
+                      <span className="text-xs text-emerald-300">Your team</span>
+                    ) : requestIsPending ? (
+                      <span className="text-xs text-amber-300">Request pending</span>
+                    ) : team.request_status === 'approved' ? (
+                      <span className="text-xs text-emerald-300">Joined</span>
+                    ) : canRequest ? (
+                      <button type="button" disabled={Boolean(teamActionBusy)} onClick={() => runTeamAction(`request-${team.registration_id}`, () => requestToJoinTournamentTeam(team.registration_id), `Join request sent to ${team.leader_name}.`)} className="rounded-xl bg-gradient-to-r from-brand-600 to-cyanAccent-600 px-4 py-2.5 text-xs font-bold text-white disabled:opacity-50">
+                        {teamActionBusy === `request-${team.registration_id}` ? 'Sending…' : 'Request to join'}
+                      </button>
+                    ) : (
+                      <span className="text-xs text-gray-500">{team.member_count >= team.team_size ? 'Roster full' : 'Requests closed'}</span>
+                    )}
+                  </div>
+                );
+              })}
+              {hasPendingTeamRequest && <p className="text-xs text-amber-300">You already have a request waiting for a team leader. You can only join one team in this tournament.</p>}
+            </>
+          )}
+        </section>
+      )}
 
       {/* 3. REGISTRATION FORM DRAWER (When active) */}
       {isRegistering && !userRegistration && (
@@ -411,7 +553,7 @@ export default function TournamentDetailPage() {
           <div className="flex items-center justify-between pb-4 border-b border-surface-border mb-6">
             <div>
               <h3 className="font-display font-bold text-xl text-white">
-                Player Registration — {tournament.title}
+                {tournament.team_size > 1 ? 'Create Tournament Team' : 'Solo Player Registration'} — {tournament.title}
               </h3>
               <p className="text-xs text-gray-400 mt-0.5 font-mono">
                 Format: {tournament.mode} ({tournament.team_size} Players) • Entry: {isFree ? 'FREE' : `₹${entryFeeInr}`}
@@ -426,11 +568,8 @@ export default function TournamentDetailPage() {
           </div>
 
           <form onSubmit={handleRegisterSubmit} className="space-y-6">
-            <p className="text-[11px] text-gray-500">Faded “e.g.” text is placeholder guidance only. Enter your real team name, in-game name, and player ID.</p>
-            <div role="note" className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-950/20 px-4 py-3 text-xs leading-relaxed text-amber-200">
-              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-              <span>Check your team name and every player’s in-game name and ID before joining. Once registered for this tournament, the team and roster cannot be changed.</span>
-            </div>
+            <p className="text-[11px] text-gray-500">Enter the in-game identity saved to your account for this game.</p>
+            {tournament.team_size > 1 && <div role="note" className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-950/20 px-4 py-3 text-xs leading-relaxed text-amber-200"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>You are creating a team as its first member. Other players request to join, and you approve the roster. After registration closes, the roster is locked. You can transfer team leadership to an approved member.</span></div>}
             {regError && (
               <div className="p-3 rounded-xl bg-red-950/50 border border-red-500/40 text-xs text-red-300 flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 flex-shrink-0" />
@@ -438,8 +577,8 @@ export default function TournamentDetailPage() {
               </div>
             )}
 
-            {/* Team Name */}
-            <div>
+            {/* Team Name is only used for team tournaments. */}
+            {tournament.team_size > 1 && <div>
               <label className="block text-xs font-mono uppercase text-gray-300 mb-1.5">
                 Team / Squad Name <span className="text-rose-400">*</span>
               </label>
@@ -451,12 +590,12 @@ export default function TournamentDetailPage() {
                 required
                 className="w-full px-3.5 py-2.5 rounded-xl bg-surface-200 border border-surface-border text-white text-sm focus:border-brand-500 focus:outline-none"
               />
-            </div>
+            </div>}
 
             {/* Captain / leader identity */}
             <div className="p-4 rounded-2xl bg-surface-200/60 border border-surface-border space-y-4">
               <div className="text-xs font-mono uppercase font-bold text-brand-300">
-                Captain / Leader Details
+                {tournament.team_size > 1 ? 'Team Leader Details' : 'Player Details'}
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
@@ -488,46 +627,7 @@ export default function TournamentDetailPage() {
               </div>
             </div>
 
-            {/* Team identities */}
-            {tournament.team_size > 1 && (
-              <div className="p-4 rounded-2xl bg-surface-200/60 border border-surface-border space-y-4">
-                <div className="text-xs font-mono uppercase font-bold text-cyanAccent-400">
-                  Teammates ({tournament.team_size - 1} required)
-                </div>
-                {teammates.map((tm, idx) => (
-                  <div key={idx} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
-                      <input
-                        type="text"
-                        value={tm.ign}
-                        onChange={(e) => {
-                          const copy = [...teammates];
-                          copy[idx].ign = e.target.value;
-                          setTeammates(copy);
-                        }}
-                        placeholder={`Player ${idx + 2} ${tournament.game} IGN`}
-                        required
-                        className="w-full px-3.5 py-2 rounded-xl bg-surface-100 border border-surface-border text-white text-sm focus:border-brand-500 focus:outline-none"
-                      />
-                    </div>
-                    <div>
-                      <input
-                        type="text"
-                        value={tm.uid}
-                        onChange={(e) => {
-                          const copy = [...teammates];
-                          copy[idx].uid = e.target.value;
-                          setTeammates(copy);
-                        }}
-                        placeholder={`Player ${idx + 2} ${tournament.game} ID`}
-                        required
-                        className="w-full px-3.5 py-2 rounded-xl bg-surface-100 border border-surface-border text-white text-sm focus:border-brand-500 focus:outline-none font-mono"
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+            {tournament.team_size > 1 && <p className="text-xs text-gray-400">Your team currently starts with you as its leader. You can approve other account holders from the Tournament teams section after you create it.</p>}
 
             {/* Submit button */}
             <div className="flex justify-end gap-3 pt-2">
@@ -543,7 +643,7 @@ export default function TournamentDetailPage() {
                 disabled={isSubmittingReg}
                 className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-brand-600 to-cyanAccent-600 hover:from-brand-500 hover:to-cyanAccent-500 text-white font-bold text-xs uppercase tracking-wider shadow-glow disabled:opacity-60"
               >
-                {isSubmittingReg ? 'Registering...' : isFree ? 'Confirm Free Registration' : 'Proceed to Payment (₹' + entryFeeInr + ')'}
+                {isSubmittingReg ? 'Registering...' : isFree ? (tournament.team_size > 1 ? 'Create Free Team' : 'Join Free Tournament') : (tournament.team_size > 1 ? `Create Team · ₹${entryFeeInr}` : `Register · ₹${entryFeeInr}`)}
               </button>
             </div>
           </form>
@@ -747,6 +847,7 @@ export default function TournamentDetailPage() {
                   <th className="py-3 px-4 w-16 text-center">Slot</th>
                   <th className="py-3 px-4">Squad / Team</th>
                   <th className="py-3 px-4">Captain</th>
+                  <th className="py-3 px-4">Registered roster · in-game IDs</th>
                   <th className="py-3 px-4 text-center">Status</th>
                   <th className="py-3 px-4 text-right">Registration Code</th>
                 </tr>
@@ -760,10 +861,23 @@ export default function TournamentDetailPage() {
                         #{r.slot_number || idx + 1}
                       </td>
                       <td className="py-3 px-4 font-semibold text-white">
-                        {r.team_name}
+                        {r.team_name || (tournament.team_size === 1 ? 'Solo player' : 'Team')}
                       </td>
                       <td className="py-3 px-4 text-gray-300">
                         {r.captain?.display_name || 'Captain'}
+                      </td>
+                      <td className="py-3 px-4 text-gray-300">
+                        <div className="space-y-1">
+                          {(r.members || []).map((member) => (
+                            <div key={member.id} className="font-mono text-[11px]">
+                              <span className="text-white">{member.profile?.display_name || member.ign}</span>
+                              {member.profile?.username && <span className="text-gray-500"> @{member.profile.username}</span>}
+                              <span className="text-gray-500"> · {member.ign} · ID {member.uid}</span>
+                              {member.role === 'captain' && <span className="ml-1 text-cyanAccent-400">· leader</span>}
+                            </div>
+                          ))}
+                          {!r.members?.length && <span className="text-gray-500">No roster identities saved</span>}
+                        </div>
                       </td>
                       <td className="py-3 px-4 text-center">
                         <StatusBadge status={r.status} size="sm" />

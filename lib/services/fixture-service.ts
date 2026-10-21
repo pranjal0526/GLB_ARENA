@@ -108,7 +108,7 @@ export async function deleteArchivedMatch(matchId: string, adminId: string): Pro
 export async function getUserMatches(userId: string): Promise<Match[]> {
   if (isSupabaseConfigured()) {
     const registrations = await getUserRegistrations(userId);
-    const ids = registrations.filter((registration) => registration.captain_id === userId).map((registration) => registration.id);
+    const ids = registrations.map((registration) => registration.id);
     if (!ids.length) return [];
     const { data, error } = await createClient().from('match_participants').select('match_id').in('registration_id', ids);
     if (error) throw error;
@@ -116,7 +116,7 @@ export async function getUserMatches(userId: string): Promise<Match[]> {
   }
   const store = getStore();
   const userRegIds = new Set(
-    store.registrations.filter(r => r.captain_id === userId).map(r => r.id)
+    store.registrations.filter(r => r.captain_id === userId || r.members?.some((member) => member.player_id === userId)).map(r => r.id)
   );
 
   const matched = store.matches.filter(m =>

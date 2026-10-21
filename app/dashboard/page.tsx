@@ -225,7 +225,7 @@ export default function PlayerDashboard() {
                         {tourney?.title}
                       </h3>
                       <div className="text-xs font-mono text-gray-400 mt-0.5">
-                        Registered Team: <strong className="text-white">{reg.team_name}</strong>
+                        Tournament entry: <strong className="text-white">{reg.team_name || 'Solo player'}</strong>
                       </div>
                     </div>
 
@@ -331,6 +331,7 @@ export default function PlayerDashboard() {
             {activeRegistrations.map((reg) => {
               const isFree = reg.tournament?.entry_fee_paise === 0;
               const feeInr = (reg.tournament?.entry_fee_paise || 0) / 100;
+              const isTeamLeader = reg.captain_id === currentUser.id;
 
               return (
                 <div
@@ -350,7 +351,7 @@ export default function PlayerDashboard() {
                     </h3>
 
                     <div className="text-xs text-gray-400 font-mono">
-                      Team: <strong className="text-white">{reg.team_name}</strong> • Mode: {reg.tournament?.mode}
+                      Entry: <strong className="text-white">{reg.team_name || 'Solo player'}</strong> • Mode: {reg.tournament?.mode}
                     </div>
                   </div>
 
@@ -363,7 +364,7 @@ export default function PlayerDashboard() {
                       </div>
                     </div>
 
-                    {reg.status === 'pending_payment' && (
+                    {isTeamLeader && reg.status === 'pending_payment' && (
                       <button
                         onClick={() => setSelectedPayReg(reg)}
                         className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs uppercase tracking-wider shadow-glow-sm flex items-center gap-1.5 transition-all"
@@ -373,7 +374,7 @@ export default function PlayerDashboard() {
                       </button>
                     )}
 
-                    {reg.status === 'payment_submitted' && (
+                    {isTeamLeader && reg.status === 'payment_submitted' && (
                       <div className="px-3 py-1.5 rounded-lg bg-violet-950/50 border border-violet-500/30 text-xs font-mono text-violet-300 font-medium text-right">
                         <div>Payment verification in progress</div>
                         <div className="mt-1 text-[10px] text-gray-400">Your entry will be confirmed once payment is verified.</div>
@@ -390,13 +391,18 @@ export default function PlayerDashboard() {
                       </Link>
                     )}
 
-                    {reg.status === 'rejected' && (
+                    {isTeamLeader && reg.status === 'rejected' && (
                       <button
                         onClick={() => setSelectedPayReg(reg)}
                         className="px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs uppercase tracking-wider"
                       >
                         Resubmit UTR
                       </button>
+                    )}
+                    {!isTeamLeader && reg.status !== 'confirmed' && (
+                      <div className="max-w-xs text-right text-[11px] text-cyanAccent-200">
+                        Your team leader is handling entry payment and confirmation.
+                      </div>
                     )}
                   </div>
                 </div>
