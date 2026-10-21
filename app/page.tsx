@@ -15,7 +15,6 @@ import {
   ChevronRight, 
   Users, 
   CheckCircle2, 
-  IndianRupee, 
   Swords, 
   HelpCircle,
   QrCode
@@ -27,14 +26,7 @@ export default async function HomePage() {
   const [allTournaments, leaderboard] = await Promise.all([getTournaments(), getLeaderboard()]);
   const topPlayers = leaderboard.slice(0, 5);
 
-  // Platform statistics derived from actual records
-  const totalTournamentsCount = allTournaments.length;
-  const activeRegistrationsCount = allTournaments.reduce((sum, tournament) => sum + (tournament.registered_count || 0), 0);
-  const totalPrizeDistributed = allTournaments.reduce((acc, t) => acc + (t.prize_pool_paise / 100), 0);
-  const activePlayersCount = leaderboard.length;
-
   const featuredTournaments = allTournaments.filter(t => t.status === 'open' || t.status === 'live').slice(0, 3);
-  const upcomingTournaments = allTournaments.filter(t => t.status === 'open').slice(0, 3);
 
   return (
     <div className="space-y-24 pb-16">
@@ -112,40 +104,32 @@ export default async function HomePage() {
         </div>
       </section>
 
-      {/* 2. PLATFORM STATISTICS (Actual database-backed records) */}
+      {/* 2. PLAYER QUICK START */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="rounded-3xl bg-surface-100/90 border border-surface-border p-8 md:p-12 shadow-2xl relative overflow-hidden">
-          <div className="absolute top-0 right-0 -mr-16 -mt-16 w-64 h-64 bg-brand-500/10 rounded-full blur-3xl pointer-events-none" />
-
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-8 divide-y md:divide-y-0 md:divide-x divide-surface-border">
-            <div className="flex flex-col items-center text-center p-2">
-              <div className="text-3xl sm:text-4xl font-display font-black text-cyanAccent-400">
-                ₹{totalPrizeDistributed.toLocaleString('en-IN')}
-              </div>
-              <div className="text-xs font-mono uppercase text-gray-400 mt-1">Total Prize Pool Tracked</div>
-            </div>
-
-            <div className="flex flex-col items-center text-center p-2 pt-6 md:pt-2">
-              <div className="text-3xl sm:text-4xl font-display font-black text-white">
-                {totalTournamentsCount}
-              </div>
-              <div className="text-xs font-mono uppercase text-gray-400 mt-1">Tournaments Hosted</div>
-            </div>
-
-            <div className="flex flex-col items-center text-center p-2 pt-6 md:pt-2">
-              <div className="text-3xl sm:text-4xl font-display font-black text-brand-400">
-                {activeRegistrationsCount}
-              </div>
-              <div className="text-xs font-mono uppercase text-gray-400 mt-1">Squad Registrations</div>
-            </div>
-
-            <div className="flex flex-col items-center text-center p-2 pt-6 md:pt-2">
-              <div className="text-3xl sm:text-4xl font-display font-black text-emerald-400">
-                {activePlayersCount}
-              </div>
-              <div className="text-xs font-mono uppercase text-gray-400 mt-1">Verified Competitive Profiles</div>
-            </div>
-          </div>
+        <div className="mb-8 max-w-2xl">
+          <div className="text-xs font-mono uppercase tracking-wider text-cyanAccent-400">GET TO THE ARENA</div>
+          <h2 className="mt-1 text-2xl font-display font-bold text-white sm:text-3xl">Your next match starts here</h2>
+          <p className="mt-2 text-sm text-gray-400">Set up your player identity, choose an event, and follow your results.</p>
+        </div>
+        <div className="grid gap-5 md:grid-cols-3">
+          <Link href="/profile" className="group rounded-2xl border border-surface-border bg-surface-100 p-6 transition-colors hover:border-cyanAccent-500/50 hover:bg-surface-50">
+            <CheckCircle2 className="h-6 w-6 text-cyanAccent-400" />
+            <h3 className="mt-4 font-display text-lg font-bold text-white">Set up your player profile</h3>
+            <p className="mt-2 min-h-12 text-sm leading-relaxed text-gray-400">Add your BGMI or Free Fire name and player ID, then submit an ID screenshot for review.</p>
+            <span className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-cyanAccent-400">Complete profile <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" /></span>
+          </Link>
+          <Link href="/tournaments" className="group rounded-2xl border border-surface-border bg-surface-100 p-6 transition-colors hover:border-brand-500/50 hover:bg-surface-50">
+            <Users className="h-6 w-6 text-brand-400" />
+            <h3 className="mt-4 font-display text-lg font-bold text-white">Find a tournament</h3>
+            <p className="mt-2 min-h-12 text-sm leading-relaxed text-gray-400">Browse open and live events, compare formats and entry fees, and register solo or with your squad.</p>
+            <span className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-brand-400">Browse events <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" /></span>
+          </Link>
+          <Link href="/leaderboard" className="group rounded-2xl border border-surface-border bg-surface-100 p-6 transition-colors hover:border-amber-500/50 hover:bg-surface-50">
+            <Trophy className="h-6 w-6 text-amber-400" />
+            <h3 className="mt-4 font-display text-lg font-bold text-white">Track your progress</h3>
+            <p className="mt-2 min-h-12 text-sm leading-relaxed text-gray-400">Check player and team rankings, match records, ratings, and badges you have unlocked.</p>
+            <span className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-amber-400">Open leaderboards <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" /></span>
+          </Link>
         </div>
       </section>
 
