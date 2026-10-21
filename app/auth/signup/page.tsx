@@ -4,7 +4,6 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
-import { GitHubAuthButton } from '@/components/github-auth-button';
 import { Flame, Lock, AlertCircle, ArrowRight } from 'lucide-react';
 
 export default function SignUpPage() {
@@ -115,11 +114,6 @@ export default function SignUpPage() {
             </div>
           )}
 
-          <GitHubAuthButton />
-          <div className="flex items-center gap-3 text-[10px] text-gray-500 font-mono uppercase">
-            <span className="h-px bg-surface-border flex-1" />or use email<span className="h-px bg-surface-border flex-1" />
-          </div>
-
           {emailConfirmationPending ? (
             <div className="text-center text-xs font-mono text-gray-400">
               Confirm your email using the link we sent. It will sign you in and return you here. Or{' '}
@@ -172,7 +166,7 @@ export default function SignUpPage() {
                   className="w-full px-3.5 py-2.5 rounded-xl bg-surface-200 border border-surface-border text-white text-sm focus:border-brand-500 focus:outline-none"
                 />
                 <p className="mt-1 text-[10px] text-gray-500">
-                  Email signup needs a confirmation link. GitHub signup avoids confirmation-email sending limits.
+                  Email signup requires a confirmation link. Check your inbox after registering.
                 </p>
               </div>
 

@@ -35,12 +35,13 @@ Before using sign-in or organizer tools, make sure `.env.local` contains the URL
    - `supabase/migrations/006_sequential_battle_royale_match_numbers.sql`
    - `supabase/migrations/007_player_verification_and_event_deletion.sql`
    - `supabase/migrations/008_private_player_phone_numbers.sql`
+   - `supabase/migrations/009_admin_team_match_and_verification_controls.sql`
 
-   The first migration creates the tables and initial policies. The second adds Free Fire identities, transactional registration and payment actions, organizer operations, and access-checked room credential functions. The third adds the admin paid-entry switch and restricts participant rosters to the captain and organizer. The fourth makes profile creation support GitHub OAuth accounts. The fifth adds individual and team rankings, result-linked rating updates, permanent rating badges, prize award tracking, and avatar uploads. The sixth repairs duplicate Battle Royale match numbers and assigns the next number automatically when a lobby is created. The seventh adds private game-ID screenshot verification and audited deletion of archived events. The eighth stores phone numbers in a private table that only the player and authorized server-side admin actions can read. Run each migration once against a new project, in this order. For an existing project, run only migrations it has not already applied.
+   The first migration creates the tables and initial policies. The second adds Free Fire identities, transactional registration and payment actions, organizer operations, and access-checked room credential functions. The third adds the admin paid-entry switch and restricts participant rosters to the captain and organizer. The fourth updates profile creation for OAuth metadata. The fifth adds individual and team rankings, result-linked rating updates, permanent rating badges, prize award tracking, and avatar uploads. The sixth repairs duplicate Battle Royale match numbers and assigns the next number automatically when a lobby is created. The seventh adds private game-ID screenshot verification and audited deletion of archived events. The eighth stores phone numbers in a private table that only the player and authorized server-side admin actions can read. The ninth adds audited admin deletion for teams, archived matches, and rejected verification submissions. Run each migration once against a new project, in this order. For an existing project, run only migrations it has not already applied.
 
 5. To add sample tournaments and announcements, run `supabase/seed.sql` once. It adds BGMI and Free Fire tournament listings. Do not run it repeatedly; its sample tournament IDs are fixed.
 6. In Supabase **Authentication → URL Configuration**, set the Site URL to `http://localhost:3000` and add `http://localhost:3000/auth/callback` and your deployed site's `/auth/callback` URL to the redirect allow list. Email confirmation links return through this callback.
-7. In Supabase **Authentication → Sign In / Providers**, disable **Phone** if it was enabled for SMS. To enable GitHub, create an OAuth App in GitHub (**Settings → Developer settings → OAuth Apps**). Set the GitHub app's **Homepage URL** to your website origin (for local development, `http://localhost:3000`). Set its **Authorization callback URL** to the callback shown in Supabase under **Authentication → Sign In / Providers → GitHub** (`https://<project-ref>.supabase.co/auth/v1/callback`). Copy the GitHub Client ID and Client Secret into the GitHub provider settings in Supabase and enable the provider.
+7. In Supabase **Authentication → Sign In / Providers**, enable Email and disable Phone or GitHub providers if you do not use them. Email/password registration may require confirmation email delivery; configure custom SMTP if Supabase's default email limit is too low.
 8. Start the app:
 
    ```bash
@@ -52,7 +53,7 @@ Before using sign-in or organizer tools, make sure `.env.local` contains the URL
 
 ## Make the first organizer account
 
-Create a player account through email/password or GitHub, then promote it in the Supabase SQL Editor. Replace the username with the account you created:
+Create a player account through email/password, then promote it in the Supabase SQL Editor. Replace the username with the account you created:
 
 ```sql
 UPDATE public.profiles
@@ -101,16 +102,16 @@ Restart `npm run dev` after changing environment values. Instagram story cards d
 
    If this directory is already a Git repository, skip `git init` and add only the `origin` remote if one is not configured.
 3. Import the GitHub repository into Vercel. Add `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and `NEXT_PUBLIC_SITE_URL` in Vercel's Environment Variables. The service-role key is server-only; keep it out of GitHub and all `NEXT_PUBLIC_` variables. Add the UPI environment values only if accepting paid events.
-4. Deploy, then change `NEXT_PUBLIC_SITE_URL` to the production site origin and redeploy. Add `https://YOUR_SITE_DOMAIN/auth/callback` to the Supabase Auth redirect allow list, and set its Site URL to the production origin. Add the same callback URL to the GitHub OAuth app's allowed callback list only if GitHub requires it; Supabase remains the OAuth callback URL configured in the GitHub provider.
+4. Deploy, then change `NEXT_PUBLIC_SITE_URL` to the production site origin and redeploy. Add `https://YOUR_SITE_DOMAIN/auth/callback` to the Supabase Auth redirect allow list, and set its Site URL to the production origin.
 5. Locally, `npm run build` creates the same production build Vercel runs. Vercel runs the build automatically for pushes to the connected branch.
 
 ## Authentication options
 
-Players can register or sign in with GitHub OAuth, or use email and password. GitHub avoids confirmation-email sending limits. Email/password signup depends on Supabase email confirmation and its email provider's rate limits. If confirmation emails are being throttled, configure custom SMTP in Supabase Authentication or use GitHub while the limit resets. Confirm the `http://localhost:3000/auth/callback` URL is in Supabase's redirect allow list. See the [Supabase GitHub sign-in guide](https://supabase.com/docs/guides/auth/social-login/auth-github) for provider setup details.
+Players register and sign in with email and password. Email signup may require a confirmation link. If confirmation emails are throttled, configure custom SMTP in Supabase Authentication and retry after the limit resets. Keep `http://localhost:3000/auth/callback` in Supabase's redirect allow list for local confirmation links.
 
 ## What uses Supabase
 
-- Supabase Auth handles GitHub OAuth, email/password sign-in, email confirmation, session restore, and sign-out.
+- Supabase Auth handles email/password sign-in, email confirmation, session restore, and sign-out.
 - The profile trigger creates a player row and stores BGMI and Free Fire identities separately.
 - Match scoring updates each linked player and their persistent team ranking. Peak rating unlocks badges that players can share from their profile.
 - Players can choose a built-in avatar or upload an image to the public avatars bucket; uploads are limited to each player's own folder.

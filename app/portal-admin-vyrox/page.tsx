@@ -16,6 +16,7 @@ import {
   GameTitle,
   TournamentStatus,
   PrizeAward,
+  Team,
 } from '@/lib/supabase/types';
 import { 
   getTournaments, 
@@ -38,10 +39,13 @@ import {
   generateBattleRoyaleLobby, 
   createCustomMatch,
   releaseMatchRoomCredentials,
-  recordMatchResults 
+  recordMatchResults,
+  deleteArchivedMatch,
 } from '@/lib/services/fixture-service';
 import { 
   getAllProfiles, 
+  getAllTeams,
+  deleteTeam,
   banUser, 
   unbanUser 
 } from '@/lib/services/profile-service';
@@ -105,7 +109,7 @@ export default function SecureAdminPortalPage() {
 
   // Navigation
   const [activeTab, setActiveTab] = useState<
-    'overview' | 'payments' | 'payouts' | 'tournaments' | 'fixtures' | 'scoring' | 'players' | 'audit'
+    'overview' | 'payments' | 'payouts' | 'tournaments' | 'fixtures' | 'scoring' | 'teams' | 'players' | 'audit'
   >('overview');
 
   // Datasets
@@ -115,6 +119,7 @@ export default function SecureAdminPortalPage() {
   const [registrations, setRegistrations] = useState<Registration[]>([]);
   const [matches, setMatches] = useState<Match[]>([]);
   const [players, setPlayers] = useState<Profile[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
   const [auditLogs, setAuditLogs] = useState<AdminAuditLog[]>([]);
   const [adminError, setAdminError] = useState<string | null>(null);
   const [paidRegistrationEnabled, setPaidRegistrationEnabledState] = useState<boolean | null>(null);
@@ -128,6 +133,8 @@ export default function SecureAdminPortalPage() {
   const [playerSearch, setPlayerSearch] = useState('');
   const [expandedPlayerId, setExpandedPlayerId] = useState<string | null>(null);
   const [deletingPlayerId, setDeletingPlayerId] = useState('');
+  const [deletingTeamId, setDeletingTeamId] = useState('');
+  const [deletingMatchId, setDeletingMatchId] = useState('');
 
   // Modals & Action States
   const [rejectPaymentModal, setRejectPaymentModal] = useState<Payment | null>(null);
@@ -192,7 +199,7 @@ export default function SecureAdminPortalPage() {
         return credentials ? { ...tournament, ...credentials } : tournament;
       }));
       setTournaments(tList);
-      if (!selectedTournamentId && tList.length > 0) {
+      if ((!selectedTournamentId || !tList.some((tournament) => tournament.id === selectedTournamentId)) && tList.length > 0) {
         const initialTournament = tList.find((tournament) => !isArchivedTournament(tournament.status)) || tList[0];
         setSelectedTournamentId(initialTournament.id);
         setCmMap(initialTournament.game === 'BGMI' ? 'Erangel' : 'Bermuda');
@@ -208,6 +215,7 @@ export default function SecureAdminPortalPage() {
       setMatches(matchLists.flat());
       const profs = await getAllProfiles();
       setPlayers(profs);
+      setTeams(await getAllTeams());
       const logs = await getAuditLogs();
       setAuditLogs(logs);
       try {
@@ -493,6 +501,34 @@ export default function SecureAdminPortalPage() {
     }
   };
 
+  const handleDeleteTeam = async (team: Team) => {
+    if (!window.confirm(`Delete “${team.name}” from team rankings? Tournament entries and their saved rosters will remain in event history.`)) return;
+    setDeletingTeamId(team.id);
+    setAdminError(null);
+    try {
+      await deleteTeam(team, adminId);
+      await loadAllData();
+    } catch (error) {
+      setAdminError(error instanceof Error ? error.message : 'Could not delete this team.');
+    } finally {
+      setDeletingTeamId('');
+    }
+  };
+
+  const handleDeleteArchivedMatch = async (match: Match) => {
+    if (!window.confirm(`Permanently delete Match ${match.match_number} and its saved result from this archived event? Player and team rankings will be recalculated.`)) return;
+    setDeletingMatchId(match.id);
+    setAdminError(null);
+    try {
+      await deleteArchivedMatch(match.id, adminId);
+      await loadAllData();
+    } catch (error) {
+      setAdminError(error instanceof Error ? error.message : 'Could not delete this match.');
+    } finally {
+      setDeletingMatchId('');
+    }
+  };
+
   // Fixture Generators
   const handleGenerateStandardFixtures = async () => {
     if (!selectedTournamentId) return;
@@ -678,7 +714,10 @@ export default function SecureAdminPortalPage() {
 
   // Active counts
   const pendingCount = payments.filter(p => p.payment_status === 'submitted').length;
-  const currentTourney = tournaments.find(t => t.id === selectedTournamentId) || tournaments[0];
+  const activeFixtureTournaments = tournaments.filter((tournament) => !isArchivedTournament(tournament.status));
+  const archivedFixtureTournaments = tournaments.filter((tournament) => isArchivedTournament(tournament.status));
+  const currentTourney = tournaments.find(t => t.id === selectedTournamentId)
+    || activeFixtureTournaments[0] || archivedFixtureTournaments[0];
   const visibleTournaments = tournaments.filter((tournament) =>
     tournamentListView === 'archive' ? isArchivedTournament(tournament.status) : !isArchivedTournament(tournament.status)
   );
@@ -692,6 +731,10 @@ export default function SecureAdminPortalPage() {
       ? a.created_at.localeCompare(b.created_at) || a.scheduled_time.localeCompare(b.scheduled_time) || a.id.localeCompare(b.id)
       : a.round_number - b.round_number || a.match_number - b.match_number);
   const currentTourneyIsArchived = Boolean(currentTourney && isArchivedTournament(currentTourney.status));
+  const upcomingLiveMatchCount = currentTourneyIsArchived ? 0 : currentTourneyMatches.filter((match) => match.status === 'scheduled' || match.status === 'live').length;
+  const completedCancelledMatchCount = currentTourneyIsArchived
+    ? currentTourneyMatches.length
+    : currentTourneyMatches.filter((match) => match.status === 'completed' || match.status === 'cancelled').length;
   const visibleFixtureMatches = currentTourneyMatches.filter((match) => fixtureMatchView === 'active'
     ? !currentTourneyIsArchived && (match.status === 'scheduled' || match.status === 'live')
     : currentTourneyIsArchived || match.status === 'completed' || match.status === 'cancelled');
@@ -865,6 +908,16 @@ export default function SecureAdminPortalPage() {
           >
             <Trophy className="w-4 h-4" />
             <span>Match Results</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('teams')}
+            className={`pb-3 font-bold border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5 ${
+              activeTab === 'teams' ? 'border-violet-500 text-violet-300' : 'border-transparent text-gray-400 hover:text-gray-200'
+            }`}
+          >
+            <Users className="w-4 h-4" />
+            <span>Teams & Rosters ({teams.length})</span>
           </button>
 
           <button
@@ -1350,7 +1403,7 @@ export default function SecureAdminPortalPage() {
                 <div className="flex items-center gap-3">
                   <span className="text-xs font-mono uppercase text-gray-400 font-bold">Select Competition:</span>
                   <select
-                    value={selectedTournamentId}
+                    value={activeFixtureTournaments.some((item) => item.id === selectedTournamentId) ? selectedTournamentId : activeFixtureTournaments[0]?.id || ''}
                     onChange={(e) => {
                       const tournament = tournaments.find((item) => item.id === e.target.value);
                       setSelectedTournamentId(e.target.value);
@@ -1358,18 +1411,20 @@ export default function SecureAdminPortalPage() {
                     }}
                     className="px-3 py-2 rounded-xl bg-surface-200 border border-surface-border text-white text-xs font-mono"
                   >
-                    {!selectedTournamentId && <option value="">Choose a tournament</option>}
-                    <optgroup label="Active events">
-                      {tournaments.filter((t) => !isArchivedTournament(t.status)).map((t) => (
-                        <option key={t.id} value={t.id}>{t.title} ({t.mode} · {t.tournament_format})</option>
-                      ))}
-                    </optgroup>
-                    <optgroup label="Past events">
-                      {tournaments.filter((t) => isArchivedTournament(t.status)).map((t) => (
-                        <option key={t.id} value={t.id}>{t.title} · {t.status}</option>
-                      ))}
-                    </optgroup>
+                    {activeFixtureTournaments.length === 0 && <option value="">No active events</option>}
+                    {activeFixtureTournaments.map((t) => (
+                      <option key={t.id} value={t.id}>{t.title} ({t.mode} · {t.tournament_format})</option>
+                    ))}
                   </select>
+                  {fixtureMatchView === 'past' && archivedFixtureTournaments.length > 0 && <select
+                    aria-label="Select an archived event"
+                    value={currentTourneyIsArchived ? currentTourney?.id || '' : ''}
+                    onChange={(e) => setSelectedTournamentId(e.target.value || activeFixtureTournaments[0]?.id || '')}
+                    className="px-3 py-2 rounded-xl bg-surface-200 border border-surface-border text-white text-xs font-mono"
+                  >
+                    <option value="">Past event archive…</option>
+                    {archivedFixtureTournaments.map((tournament) => <option key={tournament.id} value={tournament.id}>{tournament.title} · {tournament.status}</option>)}
+                  </select>}
                 </div>
 
                 {fixtureMatchView === 'active' && !currentTourneyIsArchived && <div className="flex flex-wrap items-center gap-2">
@@ -1444,14 +1499,17 @@ export default function SecureAdminPortalPage() {
 
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-surface-border bg-surface-100 p-3">
               <div className="flex gap-2" role="tablist" aria-label="Match and room status">
-                <button type="button" onClick={() => setFixtureMatchView('active')} className={`rounded-xl px-4 py-2 text-xs font-mono font-bold ${fixtureMatchView === 'active' ? 'bg-brand-600 text-white' : 'text-gray-400 hover:text-white'}`}>
-                  Upcoming &amp; live ({currentTourneyMatches.filter((match) => match.status === 'scheduled' || match.status === 'live').length})
+                <button type="button" onClick={() => {
+                  setFixtureMatchView('active');
+                  if (currentTourneyIsArchived) setSelectedTournamentId(activeFixtureTournaments[0]?.id || '');
+                }} className={`rounded-xl px-4 py-2 text-xs font-mono font-bold ${fixtureMatchView === 'active' ? 'bg-brand-600 text-white' : 'text-gray-400 hover:text-white'}`}>
+                  Upcoming &amp; live ({upcomingLiveMatchCount})
                 </button>
                 <button type="button" onClick={() => setFixtureMatchView('past')} className={`rounded-xl px-4 py-2 text-xs font-mono font-bold ${fixtureMatchView === 'past' ? 'bg-surface-200 text-cyanAccent-300' : 'text-gray-400 hover:text-white'}`}>
-                  Completed &amp; cancelled ({currentTourneyMatches.filter((match) => match.status === 'completed' || match.status === 'cancelled').length})
+                  Completed &amp; cancelled ({completedCancelledMatchCount})
                 </button>
               </div>
-              <p className="text-xs text-gray-400">Archived events and completed or cancelled matches appear in the past list.</p>
+              <p className="text-xs text-gray-400">Counts match the selected event. Use “Past event archive” to review an archived competition.</p>
             </div>
 
             {/* Fixture Cards */}
@@ -1526,7 +1584,15 @@ export default function SecureAdminPortalPage() {
                       ))}
                     </div>
 
-                    <div className="pt-2 flex justify-end">
+                    <div className="pt-2 flex flex-wrap justify-between gap-2">
+                      {currentTourneyIsArchived && <button
+                        type="button"
+                        disabled={deletingMatchId === m.id}
+                        onClick={() => void handleDeleteArchivedMatch(m)}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-rose-500/30 bg-rose-950/50 px-3 py-2 text-xs font-mono font-bold text-rose-200 disabled:opacity-50"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" /> {deletingMatchId === m.id ? 'Deleting…' : 'Delete match'}
+                      </button>}
                       <button
                         disabled={currentTourneyIsArchived || fixtureMatchView === 'past' || m.status === 'completed' || m.status === 'cancelled'}
                         onClick={() => {
@@ -1731,6 +1797,67 @@ export default function SecureAdminPortalPage() {
               })}
             </section>
           </div>
+        )}
+
+        {/* Teams and tournament rosters */}
+        {activeTab === 'teams' && (
+          <section className="space-y-4">
+            <div>
+              <h2 className="font-display text-xl font-bold text-white">Teams and registered players</h2>
+              <p className="mt-1 text-sm text-gray-400">Review each team’s tournament entries and the player IDs submitted for every slot. Removing a team hides it from team rankings while preserving event history.</p>
+            </div>
+            {teams.length === 0 ? (
+              <div className="rounded-2xl border border-surface-border bg-surface-100 p-10 text-center text-sm text-gray-400">No registered teams yet.</div>
+            ) : teams.map((team) => {
+              const teamEntries = registrations.filter((registration) => {
+                if (registration.team_id) return registration.team_id === team.id;
+                const event = tournaments.find((tournament) => tournament.id === registration.tournament_id);
+                const registeredName = (registration.team_name || registration.members?.[0]?.ign || registration.captain?.display_name || '').trim();
+                return Boolean(event && event.team_size > 1 && event.game === team.game && registeredName.toLowerCase() === team.name.trim().toLowerCase());
+              });
+              return (
+                <article key={team.id} className="rounded-2xl border border-surface-border bg-surface-100 p-5 space-y-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3 border-b border-surface-border pb-4">
+                    <div>
+                      <h3 className="text-lg font-bold text-white">{team.name}</h3>
+                      <p className="mt-1 text-xs font-mono text-cyanAccent-300">{team.game} · {teamEntries.length} tournament {teamEntries.length === 1 ? 'entry' : 'entries'} · {team.current_rating} rating</p>
+                      <p className="mt-1 text-xs text-gray-400">{team.total_wins} wins · {team.total_kills} kills · {team.total_points} points</p>
+                    </div>
+                    <button type="button" disabled={deletingTeamId === team.id} onClick={() => void handleDeleteTeam(team)} className="inline-flex items-center gap-2 rounded-lg border border-rose-500/30 bg-rose-950/50 px-3 py-2 text-xs font-bold text-rose-200 disabled:opacity-50">
+                      <Trash2 className="h-4 w-4" /> {deletingTeamId === team.id ? 'Deleting…' : 'Delete team'}
+                    </button>
+                  </div>
+                  {teamEntries.length === 0 ? <p className="text-sm text-gray-500">No event registrations are linked to this team.</p> : (
+                    <div className="grid gap-3 lg:grid-cols-2">
+                      {teamEntries.map((registration) => {
+                        const event = tournaments.find((tournament) => tournament.id === registration.tournament_id);
+                        return <div key={registration.id} className="rounded-xl border border-surface-border bg-surface-200/50 p-4">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="font-semibold text-white">{event?.title || 'Tournament'}</div>
+                            <StatusBadge status={registration.status} size="sm" />
+                          </div>
+                          <p className="mt-1 text-[11px] text-gray-400">Captain: {registration.captain?.display_name || 'Unknown'} · Slot #{registration.slot_number ?? '—'}</p>
+                          <div className="mt-3 space-y-2">
+                            {(registration.members || []).map((member) => {
+                              const memberProfile = member.player_id ? players.find((player) => player.id === member.player_id) : undefined;
+                              return <div key={member.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-surface-100 px-3 py-2 text-xs">
+                                <div>
+                                  <span className="font-bold text-white">{member.ign}</span>
+                                  <span className="ml-2 text-gray-400">{member.role === 'captain' ? 'Captain' : 'Player'}{memberProfile ? ` · ${memberProfile.display_name} (@${memberProfile.username})` : ''}</span>
+                                </div>
+                                <span className="font-mono text-cyanAccent-300">ID {member.uid}</span>
+                              </div>;
+                            })}
+                            {(registration.members || []).length === 0 && <p className="text-xs text-gray-500">No roster member details found.</p>}
+                          </div>
+                        </div>;
+                      })}
+                    </div>
+                  )}
+                </article>
+              );
+            })}
+          </section>
         )}
 
         {/* 8. TAB: PLAYERS & ANTI-CHEAT BANS */}

@@ -122,6 +122,8 @@ export async function registerForTournament(input: RegisterInput): Promise<{ suc
     created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
   };
   store.registrations.push(registration);
+  const teamKey = `${tournament.game.toLowerCase()}:${(registration.team_name || input.ign).trim().toLowerCase()}`;
+  store.deletedTeams = (store.deletedTeams || []).filter((key) => key !== teamKey);
   persistStore(store);
   return { success: true, registration: { ...registration, captain: store.profiles.find((p) => p.id === input.captainId), tournament } };
 }

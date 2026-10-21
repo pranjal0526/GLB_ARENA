@@ -28,6 +28,7 @@ export interface VyroxStore {
   ratingEvents: RatingEvent[];
   prizeAwards: PrizeAward[];
   privateContactDetails?: Record<string, string>;
+  deletedTeams?: string[];
 }
 
 const STORAGE_KEY = 'vyrox_live_store_v2';
@@ -43,6 +44,7 @@ let memoryStore: VyroxStore = {
   ratingEvents: [],
   prizeAwards: [],
   privateContactDetails: {},
+  deletedTeams: [],
 };
 
 export const getStore = (): VyroxStore => {
@@ -52,6 +54,7 @@ export const getStore = (): VyroxStore => {
       if (stored) {
         const parsed = JSON.parse(stored);
         parsed.privateContactDetails ||= {};
+        parsed.deletedTeams ||= [];
         memoryStore = parsed;
         return memoryStore;
       } else {
@@ -89,6 +92,7 @@ export const resetStore = () => {
     ratingEvents: [],
     prizeAwards: [],
     privateContactDetails: {},
+    deletedTeams: [],
   };
   persistStore();
 };

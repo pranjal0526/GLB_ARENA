@@ -1,7 +1,7 @@
 import { Match, MatchParticipant, Registration } from '../supabase/types';
 import { getStore, persistStore } from './store';
 import { logAdminAction } from './audit-service';
-import { calculate1v1Elo, calculateBattleRoyaleRatingDelta, applyRatingEvent } from './rating-service';
+import { calculate1v1Elo, calculateBattleRoyaleRatingDelta, applyRatingEvent, rebuildLocalPlayerRankings } from './rating-service';
 import { createClient } from '../supabase/client';
 import { isSupabaseConfigured } from './store';
 import { getAllRegistrations, getUserRegistrations } from './registration-service';
@@ -80,6 +80,29 @@ export async function getMatchesByTournament(tournamentId: string, includeAllPar
       registration: includeAllParticipants ? store.registrations.find(r => r.id === p.registration_id) : undefined,
     })),
   }));
+}
+
+export async function deleteArchivedMatch(matchId: string, adminId: string): Promise<void> {
+  if (isSupabaseConfigured()) {
+    const { data, error } = await createClient().rpc('admin_delete_archived_match', { p_match_id: matchId });
+    if (error) throw error;
+    const result = data as { success?: boolean; error?: string } | null;
+    if (!result?.success) throw new Error(result?.error || 'Could not delete this match. Apply migration 009 and try again.');
+    return;
+  }
+
+  const store = getStore();
+  const match = store.matches.find((item) => item.id === matchId);
+  const tournament = match && store.tournaments.find((item) => item.id === match.tournament_id);
+  if (!match || !tournament) throw new Error('Match not found.');
+  if (tournament.status !== 'completed' && tournament.status !== 'cancelled') {
+    throw new Error('Only matches from completed or cancelled events can be deleted.');
+  }
+  store.matches = store.matches.filter((item) => item.id !== matchId);
+  store.ratingEvents = store.ratingEvents.filter((event) => event.match_id !== matchId);
+  persistStore(store);
+  rebuildLocalPlayerRankings();
+  await logAdminAction({ actorId: adminId, action: 'ARCHIVED_MATCH_DELETED', targetEntity: 'matches', targetId: matchId, metadata: { tournament_id: tournament.id, match_number: match.match_number, round_label: match.round_label } });
 }
 
 export async function getUserMatches(userId: string): Promise<Match[]> {

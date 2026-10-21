@@ -32,18 +32,65 @@ export async function getAllProfiles(): Promise<Profile[]> {
 
 export async function getLeaderboard(): Promise<Profile[]> {
   if (isSupabaseConfigured()) {
-    // An organizer account may also compete. Include active admins if they
-    // have game identities or recorded tournament history; hide only
-    // organizer-only accounts from the player rankings.
-    const { data, error } = await createClient().from('profiles').select('*').eq('account_status', 'active')
-      .or('role.eq.player,total_tournaments.gt.0,bgmi_uid.not.is.null,free_fire_uid.not.is.null')
+    const { data, error } = await createClient().from('profiles').select('*')
+      .eq('role', 'player').eq('account_status', 'active')
       .order('current_rating', { ascending: false }).order('total_wins', { ascending: false }).order('total_kills', { ascending: false });
     if (error) throw error;
     return (data || []) as Profile[];
   }
-  return getStore().profiles.filter((profile) => profile.account_status === 'active'
-    && (profile.role === 'player' || profile.total_tournaments > 0 || Boolean(profile.bgmi_uid || profile.free_fire_uid)))
+  return getStore().profiles.filter((profile) => profile.role === 'player' && profile.account_status === 'active')
     .sort((a, b) => b.current_rating - a.current_rating || b.total_wins - a.total_wins || b.total_kills - a.total_kills);
+}
+
+export async function getAllTeams(): Promise<Team[]> {
+  if (isSupabaseConfigured()) {
+    const { data, error } = await createClient().from('teams').select('*').order('name');
+    if (error) throw error;
+    return (data || []) as Team[];
+  }
+
+  const store = getStore();
+  const existing = new Map((await getTeamLeaderboard()).map((team) => [`${team.game.toLowerCase()}:${team.name.trim().toLowerCase()}`, team]));
+  const grouped = new Map<string, Team>();
+  for (const registration of store.registrations) {
+    const tournament = store.tournaments.find((item) => item.id === registration.tournament_id);
+    if (!tournament || tournament.team_size <= 1) continue;
+    const name = (registration.team_name || registration.members?.[0]?.ign || registration.captain?.display_name || 'Team').trim();
+    const key = `${tournament.game.toLowerCase()}:${name.toLowerCase()}`;
+    if (store.deletedTeams?.includes(key) || grouped.has(key)) continue;
+    const rated = existing.get(key);
+    grouped.set(key, rated || {
+      id: key,
+      name,
+      game: tournament.game,
+      captain_id: registration.captain_id,
+      current_rating: 1000,
+      highest_rating: 1000,
+      tournaments_played: 0,
+      total_wins: 0,
+      total_kills: 0,
+      total_points: 0,
+      created_at: registration.created_at,
+      updated_at: registration.updated_at,
+    });
+  }
+  return [...grouped.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export async function deleteTeam(team: Team, adminId: string): Promise<void> {
+  if (isSupabaseConfigured()) {
+    const { data, error } = await createClient().rpc('admin_delete_team', { p_team_id: team.id });
+    if (error) throw error;
+    const result = data as { success?: boolean; error?: string } | null;
+    if (!result?.success) throw new Error(result?.error || 'Could not delete this team. Apply migration 009 and try again.');
+    return;
+  }
+
+  const store = getStore();
+  const key = `${team.game.toLowerCase()}:${team.name.trim().toLowerCase()}`;
+  store.deletedTeams = [...new Set([...(store.deletedTeams || []), key])];
+  persistStore(store);
+  await logAdminAction({ actorId: adminId, action: 'TEAM_DELETED', targetEntity: 'teams', targetId: team.id, metadata: { name: team.name, game: team.game } });
 }
 
 export async function getTeamLeaderboard(): Promise<Team[]> {

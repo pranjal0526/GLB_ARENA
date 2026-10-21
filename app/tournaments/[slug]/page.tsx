@@ -427,6 +427,10 @@ export default function TournamentDetailPage() {
 
           <form onSubmit={handleRegisterSubmit} className="space-y-6">
             <p className="text-[11px] text-gray-500">Faded “e.g.” text is placeholder guidance only. Enter your real team name, in-game name, and player ID.</p>
+            <div role="note" className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-950/20 px-4 py-3 text-xs leading-relaxed text-amber-200">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>Check your team name and every player’s in-game name and ID before joining. Once registered for this tournament, the team and roster cannot be changed.</span>
+            </div>
             {regError && (
               <div className="p-3 rounded-xl bg-red-950/50 border border-red-500/40 text-xs text-red-300 flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 flex-shrink-0" />

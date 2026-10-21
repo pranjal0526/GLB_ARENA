@@ -21,7 +21,6 @@ interface AuthContextType {
   isAdmin: boolean;
   isLoading: boolean;
   signIn: (email: string, password: string) => Promise<{ success: boolean; error?: string; isAdmin?: boolean }>;
-  signInWithGitHub: () => Promise<{ success: boolean; error?: string }>;
   signUp: (data: SignUpInput) => Promise<{ success: boolean; error?: string; emailConfirmationRequired?: boolean }>;
   signOut: () => Promise<void>;
   updateCurrentUserProfile: (updated: Partial<Profile>) => void;
@@ -34,7 +33,7 @@ function getAuthErrorMessage(error: { message?: string; code?: string } | null |
   const normalizedMessage = message.toLowerCase();
 
   if (code === 'over_email_send_rate_limit' || normalizedMessage.includes('email rate limit') || normalizedMessage.includes('over_email_send_rate_limit')) {
-    return 'Supabase has temporarily limited confirmation emails for this project. Use GitHub sign-in, wait before trying email registration again, or configure custom SMTP in Supabase Authentication.';
+    return 'Supabase has temporarily limited confirmation emails for this project. Wait before trying again or configure custom SMTP in Supabase Authentication.';
   }
   if (code === 'email_not_confirmed' || normalizedMessage.includes('email not confirmed')) {
     return 'Confirm your email from the link we sent, then sign in. If the link has expired, request a fresh confirmation email after Supabase allows another send.';
@@ -43,7 +42,7 @@ function getAuthErrorMessage(error: { message?: string; code?: string } | null |
     return 'Email or password is incorrect. Check your details, or register if you do not have an account yet.';
   }
   if (code === 'user_already_exists' || normalizedMessage.includes('user already registered')) {
-    return 'An account already exists with this email. Sign in instead, or use GitHub if that is how you registered.';
+    return 'An account already exists with this email. Sign in instead.';
   }
   if (code === 'weak_password' || normalizedMessage.includes('password should be')) {
     return 'Use a password with at least 6 characters.';
@@ -180,29 +179,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const signInWithGitHub: AuthContextType['signInWithGitHub'] = async () => {
-    if (!isSupabaseConfigured()) {
-      return { success: false, error: 'Connect Supabase to enable GitHub sign-in. See the authentication setup in README.md.' };
-    }
-
-    try {
-      const { error } = await createClient().auth.signInWithOAuth({
-        provider: 'github',
-        options: { redirectTo: `${window.location.origin}/auth/callback` },
-      });
-      if (error) {
-        const message = error.message.toLowerCase();
-        if (message.includes('provider is not enabled') || error.code === 'provider_disabled' || error.code === 'unsupported_provider') {
-          return { success: false, error: 'GitHub sign-in is not enabled in Supabase yet. Enable the GitHub provider and add this site’s /auth/callback URL to the redirect allow list.' };
-        }
-        return { success: false, error: getAuthErrorMessage(error, 'Could not connect to GitHub.') };
-      }
-      return { success: true };
-    } catch (error) {
-      return { success: false, error: getAuthErrorMessage(error as { message?: string; code?: string }, 'Could not connect to GitHub.') };
-    }
-  };
-
   const signUp: AuthContextType['signUp'] = async (data) => {
     if (!isSupabaseConfigured()) {
       return { success: false, error: 'Connect Supabase to create player accounts. See the database setup section in README.md.' };
@@ -271,7 +247,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const isAdmin = currentUser?.role === 'admin' && currentUser.account_status === 'active';
 
   return (
-    <AuthContext.Provider value={{ currentUser, isAdmin, isLoading, signIn, signInWithGitHub, signUp, signOut, updateCurrentUserProfile, refreshCurrentUserProfile }}>
+    <AuthContext.Provider value={{ currentUser, isAdmin, isLoading, signIn, signUp, signOut, updateCurrentUserProfile, refreshCurrentUserProfile }}>
       {children}
     </AuthContext.Provider>
   );

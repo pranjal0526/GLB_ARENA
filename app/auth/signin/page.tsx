@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { Flame, Lock, Mail, AlertCircle, ArrowRight } from 'lucide-react';
-import { GitHubAuthButton } from '@/components/github-auth-button';
 
 export default function SignInPage() {
   const router = useRouter();
@@ -109,11 +108,6 @@ export default function SignInPage() {
               <ArrowRight className="w-4 h-4" />
             </button>
           </form>
-
-          <div className="flex items-center gap-3 text-[10px] text-gray-500 font-mono uppercase">
-            <span className="h-px bg-surface-border flex-1" />or continue with<span className="h-px bg-surface-border flex-1" />
-          </div>
-          <GitHubAuthButton />
 
           <div className="pt-2 text-center text-xs font-mono text-gray-400">
             Don&apos;t have an account?{' '}

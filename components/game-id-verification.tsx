@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { CheckCircle2, Clock3, ImagePlus, ShieldCheck, XCircle } from 'lucide-react';
+import { CheckCircle2, Clock3, ImagePlus, ShieldCheck, Trash2, XCircle } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { isSupabaseConfigured } from '@/lib/services/store';
 import { GameTitle, Profile } from '@/lib/supabase/types';
@@ -143,6 +143,27 @@ export function GameIdVerificationInbox({ players }: { players: Profile[] }) {
     }
   };
 
+  const deleteRejected = async (row: VerificationRow) => {
+    if (!window.confirm(`Delete the rejected ${row.game} ID screenshot and submission for ${row.game_ign}?`)) return;
+    setBusyId(row.id);
+    setError('');
+    try {
+      const response = await fetch('/api/admin/game-id-verification', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ verificationId: row.id }),
+      });
+      const result = await response.json() as { success?: boolean; error?: string; warning?: string };
+      if (!response.ok || !result.success) throw new Error(result.error || 'Could not delete the rejected submission.');
+      setRows((current) => current.filter((item) => item.id !== row.id));
+      if (result.warning) setError(result.warning);
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'Could not delete the rejected submission.');
+    } finally {
+      setBusyId('');
+    }
+  };
+
   const playerById = new Map(players.map((player) => [player.id, player]));
   return (
     <section className="space-y-4 rounded-2xl border border-surface-border bg-surface-100 p-5">
@@ -167,6 +188,7 @@ export function GameIdVerificationInbox({ players }: { players: Profile[] }) {
                   <button type="button" disabled={busyId === row.id} onClick={() => void review(row, 'verified')} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-2 font-bold text-white disabled:opacity-50"><CheckCircle2 className="h-4 w-4" /> Verify</button>
                   <button type="button" disabled={busyId === row.id} onClick={() => void review(row, 'rejected')} className="inline-flex items-center gap-1.5 rounded-lg bg-rose-950 px-3 py-2 font-bold text-rose-200 disabled:opacity-50"><XCircle className="h-4 w-4" /> Reject</button>
                 </div>}
+                {row.status === 'rejected' && <button type="button" disabled={busyId === row.id} onClick={() => void deleteRejected(row)} className="inline-flex items-center gap-1.5 rounded-lg bg-rose-950 px-3 py-2 font-bold text-rose-200 disabled:opacity-50"><Trash2 className="h-4 w-4" /> {busyId === row.id ? 'Deleting…' : 'Delete rejected submission'}</button>}
               </div>
             </article>;
           })}
