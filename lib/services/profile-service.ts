@@ -1,102 +1,168 @@
-import { Profile } from '../supabase/types';
-import { getStore, persistStore } from './store';
+import { Profile, Team } from '../supabase/types';
+import { getStore, isSupabaseConfigured, persistStore } from './store';
+import { createClient } from '../supabase/client';
 import { logAdminAction } from './audit-service';
 
 export async function getProfile(userId: string): Promise<Profile | null> {
-  const store = getStore();
-  const profile = store.profiles.find(p => p.id === userId);
-  return profile || null;
+  if (isSupabaseConfigured()) {
+    const { data, error } = await createClient().from('profiles').select('*').eq('id', userId).maybeSingle();
+    if (error) throw error;
+    return data as Profile | null;
+  }
+  return getStore().profiles.find((profile) => profile.id === userId) || null;
 }
 
 export async function getProfileByUsername(username: string): Promise<Profile | null> {
-  const store = getStore();
-  const profile = store.profiles.find(p => p.username.toLowerCase() === username.toLowerCase());
-  return profile || null;
+  if (isSupabaseConfigured()) {
+    const { data, error } = await createClient().from('profiles').select('*').ilike('username', username).maybeSingle();
+    if (error) throw error;
+    return data as Profile | null;
+  }
+  return getStore().profiles.find((profile) => profile.username.toLowerCase() === username.toLowerCase()) || null;
 }
 
 export async function getAllProfiles(): Promise<Profile[]> {
-  const store = getStore();
-  return store.profiles;
+  if (isSupabaseConfigured()) {
+    const { data, error } = await createClient().from('profiles').select('*').order('created_at', { ascending: false });
+    if (error) throw error;
+    return (data || []) as Profile[];
+  }
+  return getStore().profiles;
 }
 
 export async function getLeaderboard(): Promise<Profile[]> {
+  if (isSupabaseConfigured()) {
+    // An organizer account may also compete. Include active admins if they
+    // have game identities or recorded tournament history; hide only
+    // organizer-only accounts from the player rankings.
+    const { data, error } = await createClient().from('profiles').select('*').eq('account_status', 'active')
+      .or('role.eq.player,total_tournaments.gt.0,bgmi_uid.not.is.null,free_fire_uid.not.is.null')
+      .order('current_rating', { ascending: false }).order('total_wins', { ascending: false }).order('total_kills', { ascending: false });
+    if (error) throw error;
+    return (data || []) as Profile[];
+  }
+  return getStore().profiles.filter((profile) => profile.account_status === 'active'
+    && (profile.role === 'player' || profile.total_tournaments > 0 || Boolean(profile.bgmi_uid || profile.free_fire_uid)))
+    .sort((a, b) => b.current_rating - a.current_rating || b.total_wins - a.total_wins || b.total_kills - a.total_kills);
+}
+
+export async function getTeamLeaderboard(): Promise<Team[]> {
+  if (isSupabaseConfigured()) {
+    const { data, error } = await createClient().from('teams').select('*')
+      .gt('tournaments_played', 0)
+      .order('current_rating', { ascending: false })
+      .order('total_wins', { ascending: false })
+      .order('total_points', { ascending: false });
+    if (error) throw error;
+    return (data || []) as Team[];
+  }
+
   const store = getStore();
-  return [...store.profiles].sort((a, b) => {
-    if (b.current_rating !== a.current_rating) {
-      return b.current_rating - a.current_rating;
+  const aggregate = new Map<string, Team>();
+  for (const match of store.matches.filter((row) => row.status === 'completed')) {
+    const tournament = store.tournaments.find((row) => row.id === match.tournament_id);
+    if (!tournament || tournament.status === 'cancelled' || tournament.team_size <= 1) continue;
+    for (const participant of match.participants || []) {
+      const registration = store.registrations.find((row) => row.id === participant.registration_id);
+      if (!registration) continue;
+      const name = registration.team_name || registration.members?.[0]?.ign || registration.captain?.display_name || 'Team';
+      const id = `${tournament.game.toLowerCase()}:${name.trim().toLowerCase()}`;
+      const row = aggregate.get(id) || {
+        id, name, game: tournament.game, captain_id: registration.captain_id,
+        current_rating: 1000, highest_rating: 1000, tournaments_played: 0,
+        total_wins: 0, total_kills: 0, total_points: 0,
+        created_at: registration.created_at, updated_at: match.updated_at,
+      };
+      const captainEvents = store.ratingEvents.filter((event) => event.match_id === match.id && event.player_id === registration.captain_id);
+      const recordedTeamDelta = participant.stats?.team_rating_change;
+      const ratingChange = typeof recordedTeamDelta === 'number'
+        ? recordedTeamDelta
+        : captainEvents.reduce((sum, event) => sum + event.rating_change, 0);
+      row.current_rating = Math.max(500, row.current_rating + ratingChange);
+      row.highest_rating = Math.max(row.highest_rating, row.current_rating);
+      row.total_wins += participant.is_winner ? 1 : 0;
+      row.total_kills += participant.kills || 0;
+      row.total_points += participant.points || 0;
+      const played = new Set(store.matches.filter((candidate) => candidate.status === 'completed'
+        && store.tournaments.find((item) => item.id === candidate.tournament_id)?.status !== 'cancelled')
+        .flatMap((candidate) => (candidate.participants || []).filter((entry) => {
+          const reg = store.registrations.find((item) => item.id === entry.registration_id);
+          return reg && `${tournament.game.toLowerCase()}:${(reg.team_name || reg.members?.[0]?.ign || reg.captain?.display_name || 'Team').trim().toLowerCase()}` === id;
+        }).map(() => candidate.tournament_id)));
+      row.tournaments_played = played.size;
+      aggregate.set(id, row);
     }
-    if (b.total_wins !== a.total_wins) {
-      return b.total_wins - a.total_wins;
-    }
-    return b.total_kills - a.total_kills;
-  });
+  }
+  return [...aggregate.values()].sort((a, b) => b.current_rating - a.current_rating || b.total_wins - a.total_wins || b.total_points - a.total_points);
 }
 
 export async function updateProfile(
   userId: string,
-  data: Partial<Pick<Profile, 'display_name' | 'bgmi_ign' | 'bgmi_uid' | 'avatar_url'>>
+  data: Partial<Pick<Profile, 'display_name' | 'bgmi_ign' | 'bgmi_uid' | 'free_fire_ign' | 'free_fire_uid' | 'avatar_url'>>
 ): Promise<Profile | null> {
+  if (isSupabaseConfigured()) {
+    const { data: updated, error } = await createClient().from('profiles')
+      .update({ ...data, updated_at: new Date().toISOString() }).eq('id', userId).select('*').maybeSingle();
+    if (error) throw error;
+    return updated as Profile | null;
+  }
   const store = getStore();
-  const profile = store.profiles.find(p => p.id === userId);
+  const profile = store.profiles.find((item) => item.id === userId);
   if (!profile) return null;
-
-  if (data.display_name) profile.display_name = data.display_name;
-  if (data.bgmi_ign) profile.bgmi_ign = data.bgmi_ign;
-  if (data.bgmi_uid) profile.bgmi_uid = data.bgmi_uid;
-  if (data.avatar_url) profile.avatar_url = data.avatar_url;
-  profile.updated_at = new Date().toISOString();
+  Object.assign(profile, data, { updated_at: new Date().toISOString() });
   persistStore(store);
-
   return profile;
 }
 
-export async function banUser(
-  userId: string,
-  reason: string,
-  adminId: string
-): Promise<{ success: boolean; error?: string }> {
+export async function getPlayerPhoneNumber(playerId: string): Promise<string | null> {
+  if (isSupabaseConfigured()) {
+    const { data, error } = await createClient().from('player_contact_details')
+      .select('phone_number').eq('player_id', playerId).maybeSingle();
+    if (error) throw error;
+    return data?.phone_number || null;
+  }
+  return getStore().privateContactDetails?.[playerId] || null;
+}
+
+export async function updatePlayerPhoneNumber(playerId: string, phoneNumber: string): Promise<void> {
+  if (isSupabaseConfigured()) {
+    const { error } = await createClient().from('player_contact_details').upsert({
+      player_id: playerId,
+      phone_number: phoneNumber,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'player_id' });
+    if (error) throw error;
+    return;
+  }
   const store = getStore();
-  const profile = store.profiles.find(p => p.id === userId);
-  if (!profile) return { success: false, error: 'User not found' };
-
-  profile.account_status = 'banned';
-  profile.ban_reason = reason;
-  profile.banned_at = new Date().toISOString();
-  profile.updated_at = new Date().toISOString();
+  store.privateContactDetails ||= {};
+  store.privateContactDetails[playerId] = phoneNumber;
   persistStore(store);
+}
 
-  await logAdminAction({
-    actorId: adminId,
-    action: 'PLAYER_BANNED',
-    targetEntity: 'profiles',
-    targetId: userId,
-    metadata: { username: profile.username, reason },
-  });
-
+async function setAccountStatus(userId: string, status: 'active' | 'banned', reason: string | undefined, adminId: string) {
+  if (isSupabaseConfigured()) {
+    const { data, error } = await createClient().rpc('set_player_account_status', {
+      p_player_id: userId, p_status: status, p_reason: reason || null,
+    });
+    if (error) return { success: false, error: error.message };
+    if (!data?.success) return { success: false, error: data?.error || 'Account status update failed.' };
+    return { success: true };
+  }
+  const store = getStore();
+  const profile = store.profiles.find((item) => item.id === userId);
+  if (!profile) return { success: false, error: 'User not found' };
+  profile.account_status = status; profile.ban_reason = status === 'active' ? null : reason || null;
+  profile.banned_at = status === 'active' ? null : new Date().toISOString();
+  profile.updated_at = new Date().toISOString(); persistStore(store);
+  await logAdminAction({ actorId: adminId, action: status === 'active' ? 'PLAYER_UNBANNED' : 'PLAYER_BANNED', targetEntity: 'profiles', targetId: userId, metadata: { username: profile.username, reason } });
   return { success: true };
 }
 
-export async function unbanUser(
-  userId: string,
-  adminId: string
-): Promise<{ success: boolean; error?: string }> {
-  const store = getStore();
-  const profile = store.profiles.find(p => p.id === userId);
-  if (!profile) return { success: false, error: 'User not found' };
+export async function banUser(userId: string, reason: string, adminId: string) {
+  return setAccountStatus(userId, 'banned', reason, adminId);
+}
 
-  profile.account_status = 'active';
-  profile.ban_reason = null;
-  profile.banned_at = null;
-  profile.updated_at = new Date().toISOString();
-  persistStore(store);
-
-  await logAdminAction({
-    actorId: adminId,
-    action: 'PLAYER_UNBANNED',
-    targetEntity: 'profiles',
-    targetId: userId,
-    metadata: { username: profile.username },
-  });
-
-  return { success: true };
+export async function unbanUser(userId: string, adminId: string) {
+  return setAccountStatus(userId, 'active', undefined, adminId);
 }

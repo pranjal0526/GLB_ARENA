@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 720" fill="none">
+  <defs>
+    <linearGradient id="sky" x1="60" y1="20" x2="1280" y2="720" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#071b20"/>
+      <stop offset=".55" stop-color="#07545a"/>
+      <stop offset="1" stop-color="#df7d37"/>
+    </linearGradient>
+    <linearGradient id="ground" x1="720" y1="350" x2="720" y2="720" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#122b2b" stop-opacity=".1"/>
+      <stop offset="1" stop-color="#071013"/>
+    </linearGradient>
+    <radialGradient id="sun" cx="0" cy="0" r="1" gradientTransform="matrix(0 260 -350 0 1100 230)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffd18b" stop-opacity=".9"/>
+      <stop offset="1" stop-color="#ffab57" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M48 0H0v48" stroke="#bffcff" stroke-opacity=".12"/>
+    </pattern>
+  </defs>
+  <path fill="url(#sky)" d="M0 0h1440v720H0z"/>
+  <path fill="url(#sun)" d="M0 0h1440v720H0z"/>
+  <path d="m0 454 140-92 106 45 154-156 136 152 117-67 127 89 114-124 135 95 130-142 181 126v340H0z" fill="#102d2c" fill-opacity=".65"/>
+  <path d="M0 532 174 457l128 79 127-144 170 126 148-83 143 91 123-139 184 130 107-80 136 74v209H0z" fill="url(#ground)"/>
+  <path d="M0 0h1440v720H0z" fill="url(#grid)"/>
+  <g stroke="#b7f4e8" stroke-opacity=".35">
+    <path d="M174 457v-98l47-24 42 24v98M197 457v-63h45v63"/>
+    <path d="M1018 441V311l58-31 61 35v126M1052 441v-88h53v88"/>
+    <path d="m391 502 34-127 42 127M386 467h89M400 424h63"/>
+    <path d="m818 483 42-148 54 148M807 441h116M828 392h73"/>
+  </g>
+  <path d="M88 84h320M88 98h210M1100 80h250M1190 94h160" stroke="#bdf8ed" stroke-opacity=".5" stroke-width="2"/>
+  <circle cx="1120" cy="224" r="6" fill="#fff0ca"/>
+  <circle cx="1120" cy="224" r="16" stroke="#fff0ca" stroke-opacity=".6"/>
+  <path d="M0 0h1440v720H0z" fill="#061013" fill-opacity=".12"/>
+</svg>

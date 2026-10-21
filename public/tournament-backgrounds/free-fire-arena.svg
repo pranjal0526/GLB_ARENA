@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 720" fill="none">
+  <defs>
+    <linearGradient id="night" x1="160" y1="40" x2="1260" y2="700" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#120d25"/>
+      <stop offset=".52" stop-color="#4b1d48"/>
+      <stop offset="1" stop-color="#e65726"/>
+    </linearGradient>
+    <linearGradient id="horizon" x1="720" y1="280" x2="720" y2="700" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ff9a47" stop-opacity=".85"/>
+      <stop offset="1" stop-color="#17101f"/>
+    </linearGradient>
+    <radialGradient id="flare" cx="0" cy="0" r="1" gradientTransform="matrix(0 260 -360 0 1020 255)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffad59" stop-opacity=".82"/>
+      <stop offset="1" stop-color="#fb5b29" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="44" height="44" patternUnits="userSpaceOnUse">
+      <path d="M44 0H0v44" stroke="#ffd3bc" stroke-opacity=".13"/>
+    </pattern>
+  </defs>
+  <path fill="url(#night)" d="M0 0h1440v720H0z"/>
+  <path fill="url(#flare)" d="M0 0h1440v720H0z"/>
+  <circle cx="1017" cy="261" r="135" fill="#ff9a47" fill-opacity=".13"/>
+  <path d="m0 474 103-65 104 38 111-116 94 97 129-153 147 130 97-80 114 68 129-148 119 99 97-53 196 116v313H0z" fill="#1d1530" fill-opacity=".8"/>
+  <path d="m0 544 161-90 101 68 105-95 128 90 131-129 118 112 124-73 101 87 130-113 121 85 92-63 128 71v226H0z" fill="url(#horizon)" fill-opacity=".75"/>
+  <path d="M0 0h1440v720H0z" fill="url(#grid)"/>
+  <g stroke="#ffd0ae" stroke-opacity=".48">
+    <path d="m260 518 28-151 29 151M247 470h82M264 420h48"/>
+    <path d="M574 498V338l74-38 76 42v156M615 498V386h68v112"/>
+    <path d="m921 507 41-188 53 188M907 459h125M928 397h88"/>
+    <path d="M1170 490V355l59-31 62 35v131M1205 490v-83h52v83"/>
+  </g>
+  <path d="M86 82h254M86 96h163M1106 84h249M1200 98h155" stroke="#ffd0ae" stroke-opacity=".55" stroke-width="2"/>
+  <path d="m1070 190 22 38 44 8-32 30 8 43-42-21-39 21 7-43-32-30 44-8 20-38Z" fill="#ffd17a" fill-opacity=".72"/>
+  <path d="M0 0h1440v720H0z" fill="#0c0815" fill-opacity=".14"/>
+</svg>

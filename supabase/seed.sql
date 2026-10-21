@@ -1,5 +1,4 @@
--- VYROX Esports Seed Data
--- Provides demo tournaments, sample players, registrations, and announcements
+-- VYROX demo tournaments and announcements. Run this once after migrations.
 
 -- Sample Tournaments
 INSERT INTO public.tournaments (
@@ -106,6 +105,27 @@ INSERT INTO public.tournaments (
     'https://images.unsplash.com/photo-1560253023-3ec5d502959f?auto=format&fit=crop&w=1200&q=80',
     'live',
     'confirmed_only'
+),
+(
+    'e5555555-5555-5555-5555-555555555555',
+    'Free Fire Booyah Cup',
+    'free-fire-booyah-cup',
+    'Open squad battle royale for Free Fire teams. Compete across Bermuda and Alpine for the Booyah Cup prize pool.',
+    'Free Fire',
+    'Squad',
+    4,
+    'Battle Royale',
+    10000,
+    2500000,
+    '[{"place": "1st", "amount": 12500}, {"place": "2nd", "amount": 7500}, {"place": "3rd", "amount": 5000}]'::jsonb,
+    24,
+    timezone('utc', now() - interval '1 day'),
+    timezone('utc', now() + interval '3 days'),
+    timezone('utc', now() + interval '4 days'),
+    '1. Use the Free Fire account registered for this squad.\n2. No emulators, hacks, or unauthorized software.\n3. Report results to the organizer after each lobby.',
+    'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1200&q=80',
+    'open',
+    '15_min_before'
 );
 
 -- Sample Announcements

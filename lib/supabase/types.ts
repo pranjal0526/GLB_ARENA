@@ -8,17 +8,23 @@ export interface Profile {
   avatar_url?: string | null;
   bgmi_ign?: string | null;
   bgmi_uid?: string | null;
+  free_fire_ign?: string | null;
+  free_fire_uid?: string | null;
   role: ProfileRole;
   account_status: AccountStatus;
   ban_reason?: string | null;
   banned_at?: string | null;
   current_rating: number;
+  /** Best rating reached; used for permanent badge unlocks. */
+  highest_rating?: number;
   total_tournaments: number;
   total_wins: number;
   total_kills: number;
   created_at: string;
   updated_at: string;
 }
+
+export type GameTitle = 'BGMI' | 'Free Fire';
 
 export type TournamentMode = 'Solo' | '1v1' | 'Duo' | 'Squad';
 export type TournamentFormat = 'Single Elimination' | 'Round Robin' | 'Battle Royale';
@@ -74,6 +80,7 @@ export interface Registration {
   tournament_id: string;
   captain_id: string;
   team_name?: string | null;
+  team_id?: string | null;
   registration_code: string;
   status: RegistrationStatus;
   disqualification_reason?: string | null;
@@ -85,6 +92,39 @@ export interface Registration {
   tournament?: Tournament;
   members?: RegistrationMember[];
   payment?: Payment;
+}
+
+export interface Team {
+  id: string;
+  name: string;
+  game: string;
+  captain_id?: string | null;
+  current_rating: number;
+  highest_rating: number;
+  tournaments_played: number;
+  total_wins: number;
+  total_kills: number;
+  total_points: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PrizeAward {
+  id: string;
+  tournament_id: string;
+  registration_id: string;
+  player_id: string;
+  team_id?: string | null;
+  place: number;
+  amount_paise: number;
+  status: 'pending' | 'paid';
+  paid_by?: string | null;
+  paid_at?: string | null;
+  transfer_reference?: string | null;
+  created_at: string;
+  tournament?: Pick<Tournament, 'id' | 'title' | 'slug'>;
+  registration?: Pick<Registration, 'id' | 'team_name' | 'captain_id'> & { captain?: Pick<Profile, 'id' | 'username' | 'display_name'> };
+  recipient?: Pick<Profile, 'id' | 'username' | 'display_name'>;
 }
 
 export interface RegistrationMember {

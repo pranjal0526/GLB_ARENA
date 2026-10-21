@@ -7,15 +7,19 @@ import {
   Tournament, 
   Registration, 
   Match, 
-  RegistrationMember 
 } from '@/lib/supabase/types';
 import { getTournamentBySlug } from '@/lib/services/tournament-service';
+import { getTournamentRoomCredentials } from '@/lib/services/tournament-service';
 import { 
-  getRegistrationsByTournament, 
+  getRegistrationsByTournament,
+  getUserRegistrations,
   registerForTournament 
 } from '@/lib/services/registration-service';
 import { getMatchesByTournament } from '@/lib/services/fixture-service';
 import { useAuth } from '@/lib/auth-context';
+import { isManualPaymentConfigured } from '@/lib/config/payments';
+import { getPaidRegistrationEnabled } from '@/lib/services/platform-settings';
+import { getTournamentBanner, isLegacyTournamentBanner } from '@/lib/utils/tournament-banner';
 import { StatusBadge } from '@/components/status-badge';
 import { UpiPaymentModal } from '@/components/upi-payment-modal';
 import { 
@@ -36,17 +40,22 @@ import {
   Share2
 } from 'lucide-react';
 
+const getBattleRoyaleLobbyDescription = (label: string) =>
+  label.replace(/^Match\s*\d+\s*[-:·]?\s*/i, '').replace(/^\((.*)\)$/, '$1').trim() || 'Battle Royale lobby';
+
 export default function TournamentDetailPage() {
   const params = useParams();
   const slug = params?.slug as string;
   const router = useRouter();
-  const { currentUser } = useAuth();
+  const { currentUser, isAdmin } = useAuth();
 
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [registrations, setRegistrations] = useState<Registration[]>([]);
   const [matches, setMatches] = useState<Match[]>([]);
   const [userRegistration, setUserRegistration] = useState<Registration | null>(null);
+  const [roomCredentials, setRoomCredentials] = useState<{ room_id: string | null; room_password: string | null } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [paidRegistrationEnabled, setPaidRegistrationEnabled] = useState(false);
 
   // Registration Form State
   const [isRegistering, setIsRegistering] = useState(false);
@@ -67,14 +76,31 @@ export default function TournamentDetailPage() {
     const t = await getTournamentBySlug(slug);
     if (t) {
       setTournament(t);
-      const regs = await getRegistrationsByTournament(t.id);
+      const regs = !currentUser
+        ? []
+        : isAdmin
+          ? await getRegistrationsByTournament(t.id)
+          : (await getUserRegistrations(currentUser.id)).filter((registration) => registration.tournament_id === t.id);
       setRegistrations(regs);
-      const m = await getMatchesByTournament(t.id);
+      const m = await getMatchesByTournament(t.id, isAdmin);
       setMatches(m);
+      try {
+        setPaidRegistrationEnabled(await getPaidRegistrationEnabled());
+      } catch {
+        setPaidRegistrationEnabled(false);
+      }
 
       if (currentUser) {
         const userReg = regs.find(r => r.captain_id === currentUser.id);
         setUserRegistration(userReg || null);
+        if (userReg?.status === 'confirmed' || isAdmin) {
+          setRoomCredentials(await getTournamentRoomCredentials(t.id));
+        } else {
+          setRoomCredentials(null);
+        }
+      } else {
+        setUserRegistration(null);
+        setRoomCredentials(null);
       }
     }
     setIsLoading(false);
@@ -82,19 +108,17 @@ export default function TournamentDetailPage() {
 
   useEffect(() => {
     loadData();
-  }, [slug, currentUser]);
+  }, [slug, currentUser, isAdmin]);
 
   // Pre-fill profile IGN and UID when user logs in
   useEffect(() => {
     if (currentUser) {
-      if (currentUser.bgmi_ign) setIgn(currentUser.bgmi_ign);
-      if (currentUser.bgmi_uid) setUid(currentUser.bgmi_uid);
-      if (tournament && tournament.mode === 'Squad') {
-        setTeammates([
-          { ign: '', uid: '' },
-          { ign: '', uid: '' },
-          { ign: '', uid: '' },
-        ]);
+      const playerIgn = tournament?.game === 'Free Fire' ? currentUser.free_fire_ign : currentUser.bgmi_ign;
+      const playerUid = tournament?.game === 'Free Fire' ? currentUser.free_fire_uid : currentUser.bgmi_uid;
+      if (playerIgn) setIgn(playerIgn);
+      if (playerUid) setUid(playerUid);
+      if (tournament) {
+        setTeammates(Array.from({ length: Math.max(0, tournament.team_size - 1) }, () => ({ ign: '', uid: '' })));
       }
     }
   }, [currentUser, tournament]);
@@ -123,8 +147,22 @@ export default function TournamentDetailPage() {
   }
 
   const isFree = tournament.entry_fee_paise === 0;
+  const canUsePaidRegistration = isFree || (paidRegistrationEnabled && isManualPaymentConfigured());
+  const bannerUrl = !tournament.banner_url || isLegacyTournamentBanner(tournament.banner_url)
+    ? getTournamentBanner(tournament.game, tournament.slug, tournament.title)
+    : tournament.banner_url;
   const entryFeeInr = tournament.entry_fee_paise / 100;
   const prizePoolInr = tournament.prize_pool_paise / 100;
+  const isPastTournament = tournament.status === 'completed' || tournament.status === 'cancelled';
+  const now = Date.now();
+  const registrationHasNotOpened = now < new Date(tournament.registration_opens_at).getTime();
+  const registrationWindowHasClosed = now > new Date(tournament.registration_closes_at).getTime();
+  const registrationCanStart = tournament.status === 'open' && !registrationHasNotOpened && !registrationWindowHasClosed;
+  const displayTournamentStatus = tournament.status === 'open' && registrationHasNotOpened
+    ? 'registration_upcoming'
+    : tournament.status === 'open' && registrationWindowHasClosed
+      ? 'registration_closed'
+      : tournament.status;
 
   // Format dates in Asia/Kolkata
   const formatIst = (dateStr: string) => {
@@ -146,6 +184,10 @@ export default function TournamentDetailPage() {
     }
 
     setRegError(null);
+    if (!isFree && !canUsePaidRegistration) {
+      setRegError('Paid registrations are not enabled yet. Please check back with the organizer.');
+      return;
+    }
     setIsSubmittingReg(true);
 
     try {
@@ -155,7 +197,7 @@ export default function TournamentDetailPage() {
         teamName: teamName || ign,
         ign: ign.trim(),
         uid: uid.trim(),
-        teammates: tournament.mode === 'Squad' ? teammates.filter(t => t.ign && t.uid) : undefined,
+        teammates: teammates.filter(t => t.ign && t.uid),
       });
 
       if (!res.success) {
@@ -166,7 +208,7 @@ export default function TournamentDetailPage() {
         await loadData();
 
         // If paid, immediately open UPI payment modal!
-        if (!isFree) {
+        if (!isFree && canUsePaidRegistration) {
           setPaymentModalOpen(true);
         }
       }
@@ -178,7 +220,14 @@ export default function TournamentDetailPage() {
   };
 
   const isUserConfirmed = userRegistration?.status === 'confirmed';
-  const showRoomDetails = isUserConfirmed && Boolean(tournament.room_id);
+  const showRoomDetails = (isUserConfirmed || isAdmin) && Boolean(roomCredentials?.room_id && roomCredentials.room_password);
+  const fixtureMatches = tournament.tournament_format === 'Battle Royale'
+    ? [...matches].sort((a, b) => a.created_at.localeCompare(b.created_at) || a.scheduled_time.localeCompare(b.scheduled_time) || a.id.localeCompare(b.id))
+    : matches;
+  const fixtureMatchNumbers = new Map(fixtureMatches.map((match, index) => [
+    match.id,
+    tournament.tournament_format === 'Battle Royale' ? index + 1 : match.match_number,
+  ] as const));
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-8">
@@ -187,7 +236,7 @@ export default function TournamentDetailPage() {
         <div className="relative h-64 md:h-80 w-full bg-surface-200 overflow-hidden">
           {tournament.banner_url && (
             <img
-              src={tournament.banner_url}
+              src={bannerUrl}
               alt={tournament.title}
               className="w-full h-full object-cover"
             />
@@ -208,7 +257,7 @@ export default function TournamentDetailPage() {
           </div>
 
           <div className="absolute top-6 right-6">
-            <StatusBadge status={tournament.status} />
+            <StatusBadge status={displayTournamentStatus} />
           </div>
         </div>
 
@@ -247,19 +296,23 @@ export default function TournamentDetailPage() {
                     <StatusBadge status={userRegistration.status} size="sm" />
                   </div>
 
-                  {userRegistration.status === 'pending_payment' && (
-                    <button
-                      onClick={() => setPaymentModalOpen(true)}
-                      className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-white font-bold text-xs uppercase tracking-wider shadow-glow-sm transition-all flex items-center justify-center gap-1.5"
-                    >
-                      <IndianRupee className="w-3.5 h-3.5" />
-                      <span>Submit UPI Reference</span>
-                    </button>
+                  {!isPastTournament && (userRegistration.status === 'pending_payment' || userRegistration.status === 'rejected') && (
+                    canUsePaidRegistration ? (
+                      <button
+                        onClick={() => setPaymentModalOpen(true)}
+                        className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-white font-bold text-xs uppercase tracking-wider shadow-glow-sm transition-all flex items-center justify-center gap-1.5"
+                      >
+                        <IndianRupee className="w-3.5 h-3.5" />
+                        <span>{userRegistration.status === 'rejected' ? 'Resubmit UPI Reference' : 'Submit UPI Reference'}</span>
+                      </button>
+                    ) : (
+                      <div className="text-center text-xs text-amber-300">Paid registration is not configured yet.</div>
+                    )
                   )}
 
                   {userRegistration.status === 'payment_submitted' && (
                     <div className="p-2.5 rounded-xl bg-violet-950/40 border border-violet-500/30 text-[11px] text-violet-300 text-center font-mono">
-                      UTR Reference Submitted. Awaiting Organizer Verification.
+                      UTR submitted. Your entry will be confirmed once payment is verified.
                     </div>
                   )}
 
@@ -270,17 +323,33 @@ export default function TournamentDetailPage() {
                     </div>
                   )}
                 </div>
-              ) : tournament.status === 'open' ? (
+              ) : registrationCanStart && canUsePaidRegistration ? (
                 <button
                   onClick={() => setIsRegistering(true)}
                   className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-brand-600 to-cyanAccent-600 hover:from-brand-500 hover:to-cyanAccent-500 text-white font-bold text-sm uppercase tracking-wider shadow-glow hover:shadow-glow-cyan transition-all flex items-center justify-center gap-2"
                 >
                   <Swords className="w-4 h-4" />
-                  <span>Register Squad Now</span>
+                  <span>Join Tournament</span>
                 </button>
+              ) : registrationCanStart ? (
+                <div className="p-2.5 rounded-xl border border-amber-500/30 bg-amber-950/20 text-center text-xs font-mono text-amber-300">
+                  Paid registration is not available yet.
+                </div>
+              ) : tournament.status === 'open' && registrationHasNotOpened ? (
+                <div className="p-2.5 rounded-xl border border-cyanAccent-500/30 bg-cyanAccent-950/20 text-center text-xs font-mono text-cyanAccent-200">
+                  Registration opens {formatIst(tournament.registration_opens_at)} IST.
+                </div>
+              ) : tournament.status === 'open' && registrationWindowHasClosed ? (
+                <div className="p-2.5 rounded-xl border border-surface-border bg-surface-100 text-center text-xs font-mono text-gray-400">
+                  Registration has closed.
+                </div>
               ) : (
                 <div className="text-center py-2 text-xs font-mono text-gray-400">
-                  Registration is {tournament.status.toUpperCase()}
+                  {tournament.status === 'cancelled'
+                    ? 'This tournament was cancelled.'
+                    : tournament.status === 'completed'
+                      ? 'This tournament is complete.'
+                      : 'Registration is closed.'}
                 </div>
               )}
             </div>
@@ -304,7 +373,7 @@ export default function TournamentDetailPage() {
             <div>
               <div className="text-xs font-mono uppercase text-gray-400 flex items-center gap-1.5">
                 <Key className="w-3.5 h-3.5 text-cyanAccent-400" />
-                <span>BGMI Custom Lobby Credentials</span>
+                <span>{tournament.game} Custom Lobby Credentials</span>
               </div>
               <div className="text-sm font-semibold text-white mt-0.5">
                 {showRoomDetails 
@@ -318,12 +387,12 @@ export default function TournamentDetailPage() {
             <div className="flex flex-wrap items-center gap-4 bg-surface-200/90 p-3 rounded-xl border border-surface-border">
               <div>
                 <span className="text-[10px] font-mono uppercase text-gray-400">ROOM ID:</span>
-                <div className="font-mono font-bold text-white text-base select-all">{tournament.room_id}</div>
+                <div className="font-mono font-bold text-white text-base select-all">{roomCredentials?.room_id}</div>
               </div>
               <div className="h-8 w-px bg-surface-border hidden sm:block" />
               <div>
                 <span className="text-[10px] font-mono uppercase text-gray-400">PASSWORD:</span>
-                <div className="font-mono font-bold text-cyanAccent-400 text-base select-all">{tournament.room_password}</div>
+                <div className="font-mono font-bold text-cyanAccent-400 text-base select-all">{roomCredentials?.room_password}</div>
               </div>
             </div>
           ) : (
@@ -342,7 +411,7 @@ export default function TournamentDetailPage() {
           <div className="flex items-center justify-between pb-4 border-b border-surface-border mb-6">
             <div>
               <h3 className="font-display font-bold text-xl text-white">
-                Squad Registration — {tournament.title}
+                Player Registration — {tournament.title}
               </h3>
               <p className="text-xs text-gray-400 mt-0.5 font-mono">
                 Format: {tournament.mode} ({tournament.team_size} Players) • Entry: {isFree ? 'FREE' : `₹${entryFeeInr}`}
@@ -357,6 +426,7 @@ export default function TournamentDetailPage() {
           </div>
 
           <form onSubmit={handleRegisterSubmit} className="space-y-6">
+            <p className="text-[11px] text-gray-500">Faded “e.g.” text is placeholder guidance only. Enter your real team name, in-game name, and player ID.</p>
             {regError && (
               <div className="p-3 rounded-xl bg-red-950/50 border border-red-500/40 text-xs text-red-300 flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 flex-shrink-0" />
@@ -379,7 +449,7 @@ export default function TournamentDetailPage() {
               />
             </div>
 
-            {/* Captain BGMI Details */}
+            {/* Captain / leader identity */}
             <div className="p-4 rounded-2xl bg-surface-200/60 border border-surface-border space-y-4">
               <div className="text-xs font-mono uppercase font-bold text-brand-300">
                 Captain / Leader Details
@@ -387,20 +457,20 @@ export default function TournamentDetailPage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-mono uppercase text-gray-400 mb-1">
-                    BGMI In-Game Name (IGN) <span className="text-rose-400">*</span>
+                    {tournament.game} In-Game Name (IGN) <span className="text-rose-400">*</span>
                   </label>
                   <input
                     type="text"
                     value={ign}
                     onChange={(e) => setIgn(e.target.value)}
-                    placeholder="e.g. SOUL_Mortal"
+                    placeholder={tournament.game === 'BGMI' ? 'e.g. SOUL_Mortal' : 'e.g. FreeFire_Player'}
                     required
                     className="w-full px-3.5 py-2 rounded-xl bg-surface-100 border border-surface-border text-white text-sm focus:border-brand-500 focus:outline-none"
                   />
                 </div>
                 <div>
                   <label className="block text-xs font-mono uppercase text-gray-400 mb-1">
-                    BGMI Character UID <span className="text-rose-400">*</span>
+                    {tournament.game} Player ID <span className="text-rose-400">*</span>
                   </label>
                   <input
                     type="text"
@@ -414,11 +484,11 @@ export default function TournamentDetailPage() {
               </div>
             </div>
 
-            {/* Teammates section if Squad */}
-            {tournament.mode === 'Squad' && (
+            {/* Team identities */}
+            {tournament.team_size > 1 && (
               <div className="p-4 rounded-2xl bg-surface-200/60 border border-surface-border space-y-4">
                 <div className="text-xs font-mono uppercase font-bold text-cyanAccent-400">
-                  Squad Teammates (Optional at initial registration)
+                  Teammates ({tournament.team_size - 1} required)
                 </div>
                 {teammates.map((tm, idx) => (
                   <div key={idx} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -431,7 +501,8 @@ export default function TournamentDetailPage() {
                           copy[idx].ign = e.target.value;
                           setTeammates(copy);
                         }}
-                        placeholder={`Player ${idx + 2} BGMI IGN`}
+                        placeholder={`Player ${idx + 2} ${tournament.game} IGN`}
+                        required
                         className="w-full px-3.5 py-2 rounded-xl bg-surface-100 border border-surface-border text-white text-sm focus:border-brand-500 focus:outline-none"
                       />
                     </div>
@@ -444,7 +515,8 @@ export default function TournamentDetailPage() {
                           copy[idx].uid = e.target.value;
                           setTeammates(copy);
                         }}
-                        placeholder={`Player ${idx + 2} BGMI UID`}
+                        placeholder={`Player ${idx + 2} ${tournament.game} ID`}
+                        required
                         className="w-full px-3.5 py-2 rounded-xl bg-surface-100 border border-surface-border text-white text-sm focus:border-brand-500 focus:outline-none font-mono"
                       />
                     </div>
@@ -497,17 +569,19 @@ export default function TournamentDetailPage() {
           <Swords className="w-4 h-4" />
           <span>Matches & Fixtures ({matches.length})</span>
         </button>
-        <button
-          onClick={() => setActiveTab('participants')}
-          className={`pb-3 text-sm font-semibold border-b-2 font-mono transition-colors flex items-center gap-1.5 ${
-            activeTab === 'participants'
-              ? 'border-brand-500 text-white'
-              : 'border-transparent text-gray-400 hover:text-gray-200'
-          }`}
-        >
-          <Users className="w-4 h-4" />
-          <span>Participants ({registrations.filter(r => r.status === 'confirmed').length})</span>
-        </button>
+        {isAdmin && (
+          <button
+            onClick={() => setActiveTab('participants')}
+            className={`pb-3 text-sm font-semibold border-b-2 font-mono transition-colors flex items-center gap-1.5 ${
+              activeTab === 'participants'
+                ? 'border-brand-500 text-white'
+                : 'border-transparent text-gray-400 hover:text-gray-200'
+            }`}
+          >
+            <Users className="w-4 h-4" />
+            <span>Participants ({registrations.filter(r => ['confirmed', 'payment_submitted', 'pending_payment'].includes(r.status)).length})</span>
+          </button>
+        )}
         <button
           onClick={() => setActiveTab('rules')}
           className={`pb-3 text-sm font-semibold border-b-2 font-mono transition-colors ${
@@ -544,7 +618,7 @@ export default function TournamentDetailPage() {
                 <div>
                   <span className="text-[11px] font-mono uppercase text-gray-400">Slots Filled</span>
                   <div className="font-semibold text-white text-sm mt-0.5">
-                    {registrations.filter(r => ['confirmed', 'payment_submitted'].includes(r.status)).length} / {tournament.max_slots}
+                    {tournament.registered_count || 0} / {tournament.max_slots}
                   </div>
                 </div>
               </div>
@@ -563,7 +637,7 @@ export default function TournamentDetailPage() {
                       key={idx}
                       className="p-3.5 rounded-xl bg-surface-200 border border-surface-border flex items-center justify-between font-mono"
                     >
-                      <span className="text-xs text-gray-400 font-bold">{prize.place} Place</span>
+                      <span className="text-xs text-gray-400 font-bold">{prize.place}</span>
                       <span className="text-sm font-black text-amber-300">₹{prize.amount.toLocaleString('en-IN')}</span>
                     </div>
                   ))}
@@ -604,11 +678,18 @@ export default function TournamentDetailPage() {
         <div className="space-y-4">
           {matches.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {matches.map((m) => (
+              {fixtureMatches.map((m) => (
                 <div key={m.id} className="p-5 rounded-2xl bg-surface-100 border border-surface-border space-y-3">
                   <div className="flex items-center justify-between border-b border-surface-border pb-3">
                     <div>
-                      <span className="text-xs font-mono text-cyanAccent-400 uppercase font-bold">{m.round_label}</span>
+                      {tournament.tournament_format === 'Battle Royale' ? (
+                        <>
+                          <span className="text-xs font-mono text-cyanAccent-400 uppercase font-bold">Match {fixtureMatchNumbers.get(m.id)} · {tournament.game}</span>
+                          <div className="text-sm font-semibold text-white mt-1">{getBattleRoyaleLobbyDescription(m.round_label)}</div>
+                        </>
+                      ) : (
+                        <span className="text-xs font-mono text-cyanAccent-400 uppercase font-bold">{m.round_label} · Match {m.match_number}</span>
+                      )}
                       <div className="text-[11px] font-mono text-gray-400">{formatIst(m.scheduled_time)}</div>
                     </div>
                     <StatusBadge status={m.status} size="sm" />
@@ -627,7 +708,9 @@ export default function TournamentDetailPage() {
                       >
                         <div className="flex items-center gap-2">
                           <span className="text-gray-500 font-bold">#{p.participant_slot || idx + 1}</span>
-                          <span className="font-semibold">{p.registration?.team_name || 'Participant'}</span>
+                          <span className="font-semibold">
+                            {isAdmin ? p.registration?.team_name || 'Participant' : `Slot ${p.participant_slot || idx + 1}`}
+                          </span>
                           {p.is_winner && <span className="text-[10px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded font-bold">WINNER</span>}
                         </div>
                         <div className="flex items-center gap-3">
@@ -651,7 +734,7 @@ export default function TournamentDetailPage() {
       )}
 
       {/* PARTICIPANTS TAB */}
-      {activeTab === 'participants' && (
+      {isAdmin && activeTab === 'participants' && (
         <div className="rounded-2xl bg-surface-100 border border-surface-border overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm font-mono">
@@ -666,7 +749,7 @@ export default function TournamentDetailPage() {
               </thead>
               <tbody className="divide-y divide-surface-border text-xs">
                 {registrations
-                  .filter(r => ['confirmed', 'payment_submitted'].includes(r.status))
+                  .filter(r => ['confirmed', 'payment_submitted', 'pending_payment'].includes(r.status))
                   .map((r, idx) => (
                     <tr key={r.id} className="hover:bg-surface-50/50">
                       <td className="py-3 px-4 text-center text-gray-400 font-bold">
@@ -715,7 +798,10 @@ export default function TournamentDetailPage() {
           isOpen={paymentModalOpen}
           onClose={() => setPaymentModalOpen(false)}
           onPaymentSubmitted={() => {
-            loadData();
+            setUserRegistration((current) => current ? { ...current, status: 'payment_submitted' } : current);
+            setRegistrations((current) => current.map((registration) => registration.id === userRegistration.id
+              ? { ...registration, status: 'payment_submitted' }
+              : registration));
           }}
         />
       )}

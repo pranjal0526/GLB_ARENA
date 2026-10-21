@@ -12,6 +12,7 @@ import {
   Clock 
 } from 'lucide-react';
 import { submitUpiPayment } from '@/lib/services/payment-service';
+import { isManualPaymentConfigured } from '@/lib/config/payments';
 
 interface UpiPaymentModalProps {
   registrationId: string;
@@ -40,8 +41,9 @@ export function UpiPaymentModal({
 
   if (!isOpen) return null;
 
-  const upiId = process.env.NEXT_PUBLIC_UPI_ID || 'vyrox.tournaments@upi';
-  const payeeName = process.env.NEXT_PUBLIC_UPI_PAYEE_NAME || 'VYROX Esports India';
+  const upiId = process.env.NEXT_PUBLIC_UPI_ID || '';
+  const payeeName = process.env.NEXT_PUBLIC_UPI_PAYEE_NAME || 'Tournament Organizer';
+  const qrImage = process.env.NEXT_PUBLIC_UPI_QR_IMAGE || '';
   const amountInr = amountPaise / 100;
 
   const handleCopyUpi = () => {
@@ -53,6 +55,11 @@ export function UpiPaymentModal({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+
+    if (!isManualPaymentConfigured()) {
+      setError('Paid registration is not configured. Contact the tournament organizer.');
+      return;
+    }
 
     const cleanUtr = utr.trim();
     if (!cleanUtr || cleanUtr.length < 6) {
@@ -109,21 +116,21 @@ export function UpiPaymentModal({
                 Payment Submitted for Verification
               </h4>
               <p className="text-sm text-gray-300 max-w-sm mx-auto leading-relaxed">
-                Your transaction reference <span className="font-mono text-cyanAccent-400 font-bold">{utr}</span> has been logged for registration <span className="font-mono text-white font-bold">{registrationCode}</span>.
+                Your entry will be confirmed once the payment is verified. UTR <span className="font-mono text-cyanAccent-400 font-bold">{utr}</span> was submitted for registration <span className="font-mono text-white font-bold">{registrationCode}</span>.
               </p>
               <div className="p-4 rounded-xl bg-surface-200 border border-surface-border text-xs text-gray-400 text-left space-y-2">
                 <div className="flex items-center gap-2 text-amber-400 font-semibold">
                   <AlertCircle className="w-4 h-4" /> Status: Pending Admin Review
                 </div>
                 <p>
-                  Our tournament organizers will verify this reference against the VYROX receiving bank records. You will receive an instant slot confirmation upon approval.
+                  The QR code is closed for this entry while the organizer reviews your payment. Check My Tournaments for the latest status.
                 </p>
               </div>
               <button
                 onClick={onClose}
                 className="w-full py-2.5 px-4 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold shadow-glow-sm transition-all"
               >
-                Return to Dashboard
+                Done
               </button>
             </div>
           ) : (
@@ -144,19 +151,20 @@ export function UpiPaymentModal({
               {/* UPI QR Display & Copy */}
               <div className="p-5 rounded-xl bg-surface-200 border border-surface-border flex flex-col items-center text-center space-y-3">
                 <div className="p-3 bg-white rounded-xl shadow-md">
-                  {/* Clean SVG QR code representation for India UPI */}
-                  <div className="w-44 h-44 bg-slate-950 p-2 rounded-lg flex flex-col items-center justify-center relative">
-                    <QrCode className="w-32 h-32 text-cyan-400" />
-                    <span className="text-[10px] font-mono text-gray-400 mt-1 uppercase tracking-wider">
-                      Scan with any UPI App
-                    </span>
-                  </div>
+                  {qrImage ? (
+                    <img src={qrImage} alt={`${payeeName} UPI QR code`} className="w-44 h-44 object-contain rounded-lg" />
+                  ) : (
+                    <div className="w-44 h-44 bg-slate-950 p-3 rounded-lg flex flex-col items-center justify-center gap-2">
+                      <QrCode className="w-14 h-14 text-gray-500" />
+                      <span className="text-center text-[10px] font-mono text-gray-400">Organizer QR image is not configured.</span>
+                    </div>
+                  )}
                 </div>
 
                 <div className="space-y-1 w-full">
                   <div className="text-xs text-gray-400">Payee: <strong className="text-white">{payeeName}</strong></div>
                   <div className="flex items-center justify-center gap-2 p-2 rounded-lg bg-surface-100 border border-surface-border font-mono text-sm text-cyanAccent-400">
-                    <span>{upiId}</span>
+                    <span>{upiId || 'UPI ID not configured'}</span>
                     <button
                       onClick={handleCopyUpi}
                       className="p-1 text-gray-400 hover:text-white transition-colors"
@@ -185,6 +193,11 @@ export function UpiPaymentModal({
                     <span>{error}</span>
                   </div>
                 )}
+                {!isManualPaymentConfigured() && (
+                  <div className="p-3 rounded-lg bg-amber-950/40 border border-amber-500/30 text-xs text-amber-300">
+                    The organizer has not configured paid registration and a valid UPI QR code yet.
+                  </div>
+                )}
 
                 <div>
                   <label className="block text-xs font-mono uppercase text-gray-300 mb-1.5">
@@ -207,11 +220,11 @@ export function UpiPaymentModal({
                 <div className="pt-2">
                   <button
                     type="submit"
-                    disabled={isSubmitting}
+                    disabled={isSubmitting || !isManualPaymentConfigured()}
                     className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-brand-600 to-cyanAccent-600 hover:from-brand-500 hover:to-cyanAccent-500 text-white font-bold text-sm shadow-glow transition-all flex items-center justify-center gap-2 disabled:opacity-60"
                   >
                     {isSubmitting ? (
-                      <span>Verifying...</span>
+                      <span>Submitting...</span>
                     ) : (
                       <>
                         <CreditCard className="w-4 h-4" />

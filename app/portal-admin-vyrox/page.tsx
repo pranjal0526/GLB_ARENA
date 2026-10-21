@@ -2,22 +2,29 @@
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { 
-  Tournament, 
-  Registration, 
-  Payment, 
-  Match, 
-  Profile, 
-  AdminAuditLog, 
-  Announcement,
+import { useRouter } from 'next/navigation';
+import { useAuth } from '@/lib/auth-context';
+import {
+  Tournament,
+  Registration,
+  Payment,
+  Match,
+  Profile,
+  AdminAuditLog,
   TournamentMode,
-  TournamentFormat
+  TournamentFormat,
+  GameTitle,
+  TournamentStatus,
+  PrizeAward,
 } from '@/lib/supabase/types';
 import { 
   getTournaments, 
   createTournament, 
+  updateTournament,
   updateTournamentStatus, 
-  releaseRoomDetails 
+  deleteArchivedTournament,
+  releaseRoomDetails,
+  getTournamentRoomCredentials,
 } from '@/lib/services/tournament-service';
 import { 
   getAllPayments, 
@@ -27,6 +34,7 @@ import {
 import { 
   getMatchesByTournament, 
   generateSingleEliminationFixtures, 
+  advanceSingleEliminationRound,
   generateBattleRoyaleLobby, 
   createCustomMatch,
   releaseMatchRoomCredentials,
@@ -38,13 +46,16 @@ import {
   unbanUser 
 } from '@/lib/services/profile-service';
 import { 
-  createAnnouncement 
-} from '@/lib/services/announcement-service';
-import { 
   getAuditLogs 
 } from '@/lib/services/audit-service';
-import { getStore, persistStore } from '@/lib/services/store';
+import { getAllRegistrations } from '@/lib/services/registration-service';
+import { getPaidRegistrationEnabled, setPaidRegistrationEnabled } from '@/lib/services/platform-settings';
+import { getAllPrizeAwards, markPrizeAwardPaid } from '@/lib/services/prize-service';
+import { isManualPaymentConfigured } from '@/lib/config/payments';
+import { getTournamentBanner } from '@/lib/utils/tournament-banner';
 import { StatusBadge } from '@/components/status-badge';
+import { GameIdVerificationInbox } from '@/components/game-id-verification';
+import { PlayerAccountDetails } from '@/components/admin/player-account-details';
 import { 
   Shield, 
   Lock, 
@@ -60,7 +71,6 @@ import {
   Download, 
   Swords, 
   FileText, 
-  Bell, 
   AlertCircle, 
   Flame, 
   LogOut, 
@@ -69,57 +79,79 @@ import {
   Check, 
   ExternalLink,
   ChevronRight,
-  Sparkles,
-  MapPin
+  MapPin,
+  Pencil,
+  Award,
+  Trash2,
 } from 'lucide-react';
 
-const ADMIN_PASSKEY = 'vyrox2026admin';
-const ADMIN_SESSION_KEY = 'vyrox_admin_authorized_token';
+const IST_OFFSET_MINUTES = 330;
+const toIstDateTimeInput = (date: Date) =>
+  new Date(date.getTime() + IST_OFFSET_MINUTES * 60_000).toISOString().slice(0, 16);
+const fromIstDateTimeInput = (value: string) => {
+  const date = new Date(`${value}:00+05:30`);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+};
+const isArchivedTournament = (status: TournamentStatus) => status === 'completed' || status === 'cancelled';
+const placeOrdinal = (placeNumber: number) =>
+  `${placeNumber}${placeNumber % 100 >= 11 && placeNumber % 100 <= 13 ? 'th' : placeNumber % 10 === 1 ? 'st' : placeNumber % 10 === 2 ? 'nd' : placeNumber % 10 === 3 ? 'rd' : 'th'} Place`;
+const getBattleRoyaleLobbyDescription = (label: string) =>
+  label.replace(/^Match\s*\d+\s*[-:·]?\s*/i, '').replace(/^\((.*)\)$/, '$1').trim() || 'Battle Royale lobby';
 
 export default function SecureAdminPortalPage() {
-  // Authorization Gate
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [inputPasskey, setInputPasskey] = useState('');
-  const [authError, setAuthError] = useState<string | null>(null);
+  const router = useRouter();
+  const { currentUser, isAdmin, isLoading: authLoading, signOut } = useAuth();
+  const adminId = currentUser?.id || '';
 
   // Navigation
   const [activeTab, setActiveTab] = useState<
-    'overview' | 'payments' | 'tournaments' | 'fixtures' | 'scoring' | 'players' | 'announcements' | 'audit'
+    'overview' | 'payments' | 'payouts' | 'tournaments' | 'fixtures' | 'scoring' | 'players' | 'audit'
   >('overview');
 
   // Datasets
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
+  const [prizeAwards, setPrizeAwards] = useState<PrizeAward[]>([]);
   const [registrations, setRegistrations] = useState<Registration[]>([]);
   const [matches, setMatches] = useState<Match[]>([]);
   const [players, setPlayers] = useState<Profile[]>([]);
   const [auditLogs, setAuditLogs] = useState<AdminAuditLog[]>([]);
+  const [adminError, setAdminError] = useState<string | null>(null);
+  const [paidRegistrationEnabled, setPaidRegistrationEnabledState] = useState<boolean | null>(null);
+  const [isSavingPaymentSetting, setIsSavingPaymentSetting] = useState(false);
 
   // Selected filters
   const [selectedTournamentId, setSelectedTournamentId] = useState<string>('');
+  const [tournamentListView, setTournamentListView] = useState<'active' | 'archive'>('active');
+  const [fixtureMatchView, setFixtureMatchView] = useState<'active' | 'past'>('active');
   const [paymentFilter, setPaymentFilter] = useState<'all' | 'submitted' | 'verified' | 'rejected'>('submitted');
   const [playerSearch, setPlayerSearch] = useState('');
+  const [expandedPlayerId, setExpandedPlayerId] = useState<string | null>(null);
+  const [deletingPlayerId, setDeletingPlayerId] = useState('');
 
   // Modals & Action States
   const [rejectPaymentModal, setRejectPaymentModal] = useState<Payment | null>(null);
   const [rejectReason, setRejectReason] = useState('');
   const [releaseRoomModal, setReleaseRoomModal] = useState<Tournament | null>(null);
+  const [releaseMatchModal, setReleaseMatchModal] = useState<Match | null>(null);
   const [customRoomId, setCustomRoomId] = useState('');
   const [customRoomPass, setCustomRoomPass] = useState('');
+  const [matchRoomId, setMatchRoomId] = useState('');
+  const [matchRoomPass, setMatchRoomPass] = useState('');
 
   // Custom Match / Fixture Builder State (Create on organizer terms!)
   const [customMatchModal, setCustomMatchModal] = useState(false);
-  const [cmRoundLabel, setCmRoundLabel] = useState('Match 1 (Erangel)');
+  const [cmRoundLabel, setCmRoundLabel] = useState('Match 1');
   const [cmMap, setCmMap] = useState('Erangel');
-  const [cmFormat, setCmFormat] = useState('Battle Royale');
   const [cmRoomId, setCmRoomId] = useState('');
   const [cmRoomPass, setCmRoomPass] = useState('');
   const [cmTime, setCmTime] = useState('');
 
   // Match Scoring State
   const [scoreMatchModal, setScoreMatchModal] = useState<Match | null>(null);
+  const [isFinalizingMatch, setIsFinalizingMatch] = useState(false);
   const [matchScores, setMatchScores] = useState<
-    Array<{ registrationId: string; kills: number; points: number; isWinner: boolean; placement?: number }>
+    Array<{ registrationId: string; kills: number; points: number; isWinner: boolean; placement?: number; memberKills?: Record<string, string> }>
   >([]);
 
   // Player Ban Modal
@@ -128,53 +160,69 @@ export default function SecureAdminPortalPage() {
 
   // New Tournament Creator (Extensive on Organizer Terms)
   const [createTournamentOpen, setCreateTournamentOpen] = useState(false);
+  const [editingTournament, setEditingTournament] = useState<Tournament | null>(null);
   const [newTitle, setNewTitle] = useState('');
   const [newSlug, setNewSlug] = useState('');
+  const [newGame, setNewGame] = useState<GameTitle>('BGMI');
   const [newMode, setNewMode] = useState<TournamentMode>('Squad');
   const [newFormat, setNewFormat] = useState<TournamentFormat>('Battle Royale');
   const [newTeamSize, setNewTeamSize] = useState('4');
   const [newMaxSlots, setNewMaxSlots] = useState('25');
   const [newEntryFeeInr, setNewEntryFeeInr] = useState('100');
   const [newPrizePoolInr, setNewPrizePoolInr] = useState('5000');
-  const [newMapPreference, setNewMapPreference] = useState('Erangel & Miramar');
+  const [newRegistrationOpensAt, setNewRegistrationOpensAt] = useState(() => toIstDateTimeInput(new Date(Date.now() + 60 * 60_000)));
+  const [newRegistrationClosesAt, setNewRegistrationClosesAt] = useState(() => toIstDateTimeInput(new Date(Date.now() + 3 * 86400_000)));
+  const [newStartTime, setNewStartTime] = useState(() => toIstDateTimeInput(new Date(Date.now() + 4 * 86400_000)));
+  const [newDescription, setNewDescription] = useState('');
+  const [newPrizeDistribution, setNewPrizeDistribution] = useState([
+    { place: '1st Place', amount: '2500' },
+    { place: '2nd Place', amount: '1500' },
+    { place: '3rd Place', amount: '1000' },
+  ]);
+  const [isCreatingTournament, setIsCreatingTournament] = useState(false);
   const [newRules, setNewRules] = useState(
     '1. Emulator, iPad, and 3rd party triggers are strictly banned.\n2. In-game name and UID must match registered records.\n3. POV recording mandatory for top 3 teams.\n4. Toxic language or abuse will trigger an immediate ban.'
   );
 
-  // Announcement State
-  const [annTitle, setAnnTitle] = useState('');
-  const [annContent, setAnnContent] = useState('');
-  const [annCategory, setAnnCategory] = useState<'general' | 'tournament' | 'urgent' | 'winner'>('urgent');
-
-  // Check existing session on load
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const session = sessionStorage.getItem(ADMIN_SESSION_KEY);
-      if (session === 'authorized') {
-        setIsAuthenticated(true);
-      }
-    }
-  }, []);
-
   const loadAllData = async () => {
-    const store = getStore();
-    const tList = await getTournaments();
-    setTournaments(tList);
-    if (!selectedTournamentId && tList.length > 0) {
-      setSelectedTournamentId(tList[0].id);
+    try {
+      const tournamentRows = await getTournaments();
+      const tList = await Promise.all(tournamentRows.map(async (tournament) => {
+        const credentials = await getTournamentRoomCredentials(tournament.id);
+        return credentials ? { ...tournament, ...credentials } : tournament;
+      }));
+      setTournaments(tList);
+      if (!selectedTournamentId && tList.length > 0) {
+        const initialTournament = tList.find((tournament) => !isArchivedTournament(tournament.status)) || tList[0];
+        setSelectedTournamentId(initialTournament.id);
+        setCmMap(initialTournament.game === 'BGMI' ? 'Erangel' : 'Bermuda');
+      }
+      const pList = await getAllPayments();
+      setPayments(pList);
+      setPrizeAwards(await getAllPrizeAwards());
+      const [registrationList, matchLists] = await Promise.all([
+        getAllRegistrations(),
+        Promise.all(tList.map((tournament) => getMatchesByTournament(tournament.id, true))),
+      ]);
+      setRegistrations(registrationList);
+      setMatches(matchLists.flat());
+      const profs = await getAllProfiles();
+      setPlayers(profs);
+      const logs = await getAuditLogs();
+      setAuditLogs(logs);
+      try {
+        setPaidRegistrationEnabledState(await getPaidRegistrationEnabled());
+      } catch {
+        setPaidRegistrationEnabledState(null);
+      }
+      setAdminError(null);
+    } catch (error) {
+      setAdminError(error instanceof Error ? error.message : 'Could not load organizer data. Check the Supabase setup and migrations.');
     }
-    const pList = await getAllPayments();
-    setPayments(pList);
-    setRegistrations(store.registrations);
-    setMatches(store.matches);
-    const profs = await getAllProfiles();
-    setPlayers(profs);
-    const logs = await getAuditLogs();
-    setAuditLogs(logs);
   };
 
   useEffect(() => {
-    if (isAuthenticated) {
+    if (isAdmin) {
       loadAllData();
 
       // Listen for cross-window / component updates
@@ -188,88 +236,261 @@ export default function SecureAdminPortalPage() {
         window.removeEventListener('storage', handleSync);
       };
     }
-  }, [isAuthenticated]);
+  }, [isAdmin]);
 
-  // Handle Passkey verification
-  const handlePasskeySubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (inputPasskey.trim() === ADMIN_PASSKEY) {
-      setIsAuthenticated(true);
-      if (typeof window !== 'undefined') {
-        sessionStorage.setItem(ADMIN_SESSION_KEY, 'authorized');
-      }
-      setAuthError(null);
-    } else {
-      setAuthError('Invalid Security Passkey. Access restricted to authorized tournament organizers.');
-    }
-  };
-
-  const handleAdminLogout = () => {
-    setIsAuthenticated(false);
-    if (typeof window !== 'undefined') {
-      sessionStorage.removeItem(ADMIN_SESSION_KEY);
-    }
+  const handleAdminLogout = async () => {
+    await signOut();
+    router.push('/');
   };
 
   // Payment Actions
   const handleApprovePayment = async (paymentId: string) => {
-    await verifyPayment(paymentId, 'p-admin-01');
+    const result = await verifyPayment(paymentId, adminId);
+    if (!result.success) { setAdminError(result.error || 'Payment approval failed.'); return; }
+    await loadAllData();
+  };
+
+  const handleMarkPrizePaid = async (award: PrizeAward) => {
+    const reference = window.prompt('Enter the UPI UTR or bank transfer reference (optional):');
+    if (reference === null) return;
+    const result = await markPrizeAwardPaid(award.id, reference, adminId);
+    if (!result.success) { setAdminError(result.error || 'Could not update prize payout.'); return; }
     await loadAllData();
   };
 
   const handleRejectPayment = async () => {
     if (!rejectPaymentModal || !rejectReason.trim()) return;
-    await rejectPayment(rejectPaymentModal.id, rejectReason.trim(), 'p-admin-01');
+    const result = await rejectPayment(rejectPaymentModal.id, rejectReason.trim(), adminId);
+    if (!result.success) { setAdminError(result.error || 'Payment rejection failed.'); return; }
     setRejectPaymentModal(null);
     setRejectReason('');
     await loadAllData();
   };
 
+  const handlePaidRegistrationToggle = async () => {
+    if (paidRegistrationEnabled === null || isSavingPaymentSetting) return;
+    const nextValue = !paidRegistrationEnabled;
+    if (nextValue && !isManualPaymentConfigured()) {
+      setAdminError('Add the UPI ID and QR image to .env.local, set NEXT_PUBLIC_MANUAL_PAYMENT_ENABLED=true, and restart the server before enabling paid entry.');
+      return;
+    }
+    setAdminError(null);
+    setIsSavingPaymentSetting(true);
+    try {
+      setPaidRegistrationEnabledState(await setPaidRegistrationEnabled(nextValue));
+    } catch (error) {
+      setAdminError(error instanceof Error ? error.message : 'Could not update the paid registration setting.');
+    } finally {
+      setIsSavingPaymentSetting(false);
+    }
+  };
+
   // Tournament Actions
+  const openTournamentEditor = (tournament: Tournament) => {
+    setAdminError(null);
+    setEditingTournament(tournament);
+    setNewTitle(tournament.title);
+    setNewSlug(tournament.slug);
+    setNewDescription(tournament.description || '');
+    setNewGame(tournament.game === 'Free Fire' ? 'Free Fire' : 'BGMI');
+    setNewMode(tournament.mode);
+    setNewFormat(tournament.tournament_format);
+    setNewTeamSize(String(tournament.team_size));
+    setNewMaxSlots(String(tournament.max_slots));
+    setNewEntryFeeInr(String(tournament.entry_fee_paise / 100));
+    setNewPrizePoolInr(String(tournament.prize_pool_paise / 100));
+    setNewRegistrationOpensAt(toIstDateTimeInput(new Date(tournament.registration_opens_at)));
+    setNewRegistrationClosesAt(toIstDateTimeInput(new Date(tournament.registration_closes_at)));
+    setNewStartTime(toIstDateTimeInput(new Date(tournament.start_time)));
+    setNewPrizeDistribution((tournament.prize_distribution || []).map((item) => ({ place: item.place, amount: String(item.amount) })));
+    setNewRules(tournament.rules);
+    setCreateTournamentOpen(true);
+  };
+
   const handleCreateTournament = async (e: React.FormEvent) => {
     e.preventDefault();
-    const feePaise = Math.round(parseFloat(newEntryFeeInr || '0') * 100);
-    const prizePaise = Math.round(parseFloat(newPrizePoolInr || '0') * 100);
+    setAdminError(null);
+    const fee = Number(newEntryFeeInr);
+    const prize = Number(newPrizePoolInr);
+    const opensAt = fromIstDateTimeInput(newRegistrationOpensAt);
+    const closesAt = fromIstDateTimeInput(newRegistrationClosesAt);
+    const startTime = fromIstDateTimeInput(newStartTime);
+    const prizeDistribution = newPrizeDistribution.map((item) => ({
+      place: item.place.trim(),
+      amount: Number(item.amount),
+    }));
+    const prizeTotalPaise = Math.round(prizeDistribution.reduce((total, item) => total + item.amount, 0) * 100);
+    const prizePoolPaise = Math.round(prize * 100);
 
-    await createTournament({
-      title: newTitle.trim(),
-      slug: newSlug.trim() || newTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
-      description: `Official ${newMode} tournament on ${newMapPreference}. Format: ${newFormat}.`,
-      game: 'BGMI',
-      mode: newMode,
-      team_size: parseInt(newTeamSize, 10),
-      tournament_format: newFormat,
-      entry_fee_paise: feePaise,
-      prize_pool_paise: prizePaise,
-      prize_distribution: [
-        { place: '1st', amount: Math.round(prizePaise * 0.5 / 100) },
-        { place: '2nd', amount: Math.round(prizePaise * 0.3 / 100) },
-        { place: '3rd', amount: Math.round(prizePaise * 0.2 / 100) },
-      ],
-      max_slots: parseInt(newMaxSlots, 10),
-      registration_opens_at: new Date().toISOString(),
-      registration_closes_at: new Date(Date.now() + 3 * 86400000).toISOString(),
-      start_time: new Date(Date.now() + 4 * 86400000).toISOString(),
-      rules: newRules,
-      status: 'open',
-      room_release_policy: '15_min_before',
-      room_released: false,
-    }, 'p-admin-01');
+    if (!newTitle.trim() || !newRules.trim() || !newSlug.trim()) {
+      setAdminError('Enter a tournament title, URL name, and rules before saving.');
+      return;
+    }
+    if (!Number.isFinite(fee) || fee < 0 || !Number.isFinite(prize) || prize < 0) {
+      setAdminError('Entry fee and prize pool must be valid amounts of ₹0 or more.');
+      return;
+    }
+    if (!opensAt || !closesAt || !startTime) {
+      setAdminError('Choose valid registration and event dates.');
+      return;
+    }
+    if (new Date(opensAt).getTime() >= new Date(closesAt).getTime()) {
+      setAdminError('Registration must close after it opens.');
+      return;
+    }
+    if (new Date(closesAt).getTime() >= new Date(startTime).getTime()) {
+      setAdminError('The event must start after registration closes.');
+      return;
+    }
+    if (!Number.isInteger(Number(newMaxSlots)) || Number(newMaxSlots) < 1) {
+      setAdminError('Enter at least one team or player slot.');
+      return;
+    }
+    if (!Number.isInteger(Number(newTeamSize)) || Number(newTeamSize) < 1 || Number(newTeamSize) > 6) {
+      setAdminError('Team size must be between 1 and 6 players.');
+      return;
+    }
+    if (editingTournament && Number(newMaxSlots) < (editingTournament.registered_count || 0)) {
+      setAdminError(`Slots cannot be lower than the ${editingTournament.registered_count} entries already reserved.`);
+      return;
+    }
+    if (editingTournament && (editingTournament.registered_count || 0) > 0 && (
+      editingTournament.game !== newGame
+      || editingTournament.mode !== newMode
+      || editingTournament.team_size !== Number(newTeamSize)
+      || editingTournament.tournament_format !== newFormat
+      || editingTournament.entry_fee_paise !== Math.round(fee * 100)
+    )) {
+      setAdminError('Game, format, team size, and entry fee are locked after a player has registered. Other event details can still be edited.');
+      return;
+    }
+    if ((prize > 0 && prizeDistribution.length === 0) || prizeDistribution.some((item) => !item.place || !Number.isFinite(item.amount) || item.amount < 0)) {
+      setAdminError('Add at least one valid prize payout, or set every payout to ₹0 for a zero prize pool.');
+      return;
+    }
+    if (prizeTotalPaise !== prizePoolPaise) {
+      setAdminError(`Prize payouts must add up to the full prize pool (₹${prize.toLocaleString('en-IN')}).`);
+      return;
+    }
 
-    setCreateTournamentOpen(false);
-    setNewTitle('');
-    setNewSlug('');
-    await loadAllData();
+    setIsCreatingTournament(true);
+    try {
+      const tournamentData = {
+        title: newTitle.trim(),
+        slug: editingTournament?.slug || newSlug.trim() || newTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+        description: newDescription.trim() || `Official ${newMode} ${newFormat} tournament for ${newGame}.`,
+        game: newGame,
+        mode: newMode,
+        team_size: parseInt(newTeamSize, 10),
+        tournament_format: newFormat,
+        entry_fee_paise: Math.round(fee * 100),
+        prize_pool_paise: prizePoolPaise,
+        prize_distribution: prizeDistribution,
+        max_slots: parseInt(newMaxSlots, 10),
+        registration_opens_at: opensAt,
+        registration_closes_at: closesAt,
+        start_time: startTime,
+        rules: newRules.trim(),
+        banner_url: getTournamentBanner(newGame, editingTournament?.slug || newSlug.trim(), newTitle.trim()),
+      };
+
+      if (editingTournament) {
+        await updateTournament(editingTournament.id, tournamentData, adminId);
+      } else {
+        await createTournament({
+          ...tournamentData,
+          status: 'open',
+          room_release_policy: '15_min_before',
+          room_released: false,
+        }, adminId);
+      }
+
+      setCreateTournamentOpen(false);
+      setEditingTournament(null);
+      setNewTitle('');
+      setNewSlug('');
+      setNewDescription('');
+      await loadAllData();
+    } catch (error) {
+      console.error('Tournament save failed:', error);
+      const details = error && typeof error === 'object'
+        ? error as { message?: unknown; details?: unknown; hint?: unknown; code?: unknown }
+        : null;
+      const message = [details?.message, details?.details, details?.hint]
+        .filter((part): part is string => typeof part === 'string' && part.trim().length > 0)
+        .join(' ');
+      setAdminError(message || (error instanceof Error ? error.message : 'Tournament could not be saved. Please try again.'));
+    } finally {
+      setIsCreatingTournament(false);
+    }
   };
 
   // Release / Update Room Credentials
   const handleSaveRoomCredentials = async () => {
     if (!releaseRoomModal) return;
-    await releaseRoomDetails(releaseRoomModal.id, customRoomId.trim(), customRoomPass.trim(), 'p-admin-01');
-    setReleaseRoomModal(null);
-    setCustomRoomId('');
-    setCustomRoomPass('');
-    await loadAllData();
+    if (!customRoomId.trim() || !customRoomPass.trim()) {
+      setAdminError('Enter both the room ID and password.');
+      return;
+    }
+    try {
+      await releaseRoomDetails(releaseRoomModal.id, customRoomId.trim(), customRoomPass.trim(), adminId);
+      setReleaseRoomModal(null);
+      setCustomRoomId('');
+      setCustomRoomPass('');
+      await loadAllData();
+    } catch (error) {
+      setAdminError(error instanceof Error ? error.message : 'Could not save room details.');
+    }
+  };
+
+  const handleSaveMatchRoomCredentials = async () => {
+    if (!releaseMatchModal) return;
+    if (!matchRoomId.trim() || !matchRoomPass.trim()) {
+      setAdminError('Enter both the lobby room ID and password.');
+      return;
+    }
+    try {
+      const result = await releaseMatchRoomCredentials(releaseMatchModal.id, matchRoomId.trim(), matchRoomPass.trim(), adminId);
+      if (!result.success) {
+        setAdminError(result.error || 'Could not save lobby room details.');
+        return;
+      }
+      setReleaseMatchModal(null);
+      setMatchRoomId('');
+      setMatchRoomPass('');
+      await loadAllData();
+    } catch (error) {
+      setAdminError(error instanceof Error ? error.message : 'Could not save lobby room details.');
+    }
+  };
+
+  const handleTournamentStatusChange = async (tournament: Tournament, status: TournamentStatus) => {
+    let cancellationReason: string | undefined;
+    if (status === 'cancelled') {
+      const reason = window.prompt('Why is this event being cancelled?');
+      if (reason === null) return;
+      cancellationReason = reason.trim();
+    }
+    setAdminError(null);
+    try {
+      await updateTournamentStatus(tournament.id, status, cancellationReason, adminId);
+      await loadAllData();
+    } catch (error) {
+      setAdminError(error instanceof Error ? error.message : 'Could not update tournament status.');
+    }
+  };
+
+  const handleDeleteArchivedTournament = async (tournament: Tournament) => {
+    const confirmation = window.prompt(`Permanently delete “${tournament.title}” and its registrations, payments, matches, and prize records? Type DELETE to confirm.`);
+    if (confirmation !== 'DELETE') return;
+    setAdminError(null);
+    try {
+      await deleteArchivedTournament(tournament.id, adminId);
+      if (selectedTournamentId === tournament.id) setSelectedTournamentId('');
+      await loadAllData();
+    } catch (error) {
+      setAdminError(error instanceof Error ? error.message : 'Could not delete this event.');
+    }
   };
 
   // Fixture Generators
@@ -278,81 +499,155 @@ export default function SecureAdminPortalPage() {
     const t = tournaments.find(x => x.id === selectedTournamentId);
     if (!t) return;
 
-    if (t.tournament_format === 'Single Elimination') {
-      await generateSingleEliminationFixtures(selectedTournamentId, 'p-admin-01');
-    } else {
-      await generateBattleRoyaleLobby(selectedTournamentId, 'Custom Match 1 (Erangel)', 'p-admin-01');
+    setAdminError(null);
+    try {
+      const result = t.tournament_format === 'Single Elimination'
+        ? await generateSingleEliminationFixtures(selectedTournamentId, adminId)
+        : await generateBattleRoyaleLobby(selectedTournamentId, `Match 1 (${t.game === 'BGMI' ? 'Erangel' : 'Bermuda'})`, adminId);
+      if (!result.success) {
+        setAdminError(result.error || 'Could not create the fixture.');
+        return;
+      }
+      await loadAllData();
+    } catch (error) {
+      setAdminError(error instanceof Error ? error.message : 'Could not create the fixture.');
     }
-    await loadAllData();
+  };
+
+  const handleAdvanceEliminationRound = async () => {
+    if (!selectedTournamentId) return;
+    setAdminError(null);
+    try {
+      const result = await advanceSingleEliminationRound(selectedTournamentId, adminId);
+      if (!result.success) {
+        setAdminError(result.error || 'Could not create the next knockout round.');
+        return;
+      }
+      if (result.tournamentComplete) {
+        setAdminError('The final is complete. Mark the tournament completed in Tournament Studio to archive it.');
+        return;
+      }
+      await loadAllData();
+    } catch (error) {
+      setAdminError(error instanceof Error ? error.message : 'Could not create the next knockout round.');
+    }
   };
 
   // Custom Match Creation on Organizer Terms
   const handleCreateCustomMatch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedTournamentId) return;
-
-    await createCustomMatch({
-      tournamentId: selectedTournamentId,
-      roundLabel: `${cmRoundLabel} [${cmMap}]`,
-      format: cmFormat,
-      scheduledTime: cmTime || new Date(Date.now() + 2 * 3600000).toISOString(),
-      roomId: cmRoomId.trim(),
-      roomPassword: cmRoomPass.trim(),
-      adminId: 'p-admin-01',
-    });
-
-    setCustomMatchModal(false);
-    setCmRoomId('');
-    setCmRoomPass('');
-    await loadAllData();
+    setAdminError(null);
+    try {
+      const result = await createCustomMatch({
+        tournamentId: selectedTournamentId,
+        roundLabel: `${cmRoundLabel.trim()} (${cmMap})`,
+        scheduledTime: (cmTime && fromIstDateTimeInput(cmTime)) || new Date(Date.now() + 2 * 3600000).toISOString(),
+        roomId: cmRoomId.trim(),
+        roomPassword: cmRoomPass.trim(),
+        adminId,
+      });
+      if (!result.success) {
+        setAdminError(result.error || 'Could not create this match.');
+        return;
+      }
+      setCustomMatchModal(false);
+      setCmRoomId('');
+      setCmRoomPass('');
+      await loadAllData();
+    } catch (error) {
+      setAdminError(error instanceof Error ? error.message : 'Could not create this match.');
+    }
   };
 
   // Finalize Results
   const handleFinalizeResults = async () => {
     if (!scoreMatchModal) return;
-    await recordMatchResults(scoreMatchModal.id, matchScores, 'p-admin-01');
-    setScoreMatchModal(null);
-    await loadAllData();
+    setAdminError(null);
+    const winnerCount = matchScores.filter((score) => score.isWinner).length;
+    if (winnerCount !== 1) {
+      setAdminError('Select exactly one winner before finalizing this match.');
+      return;
+    }
+    if (matchScores.some((score) => !Number.isInteger(score.placement) || Number(score.placement) < 1 || !Number.isInteger(score.kills) || score.kills < 0 || !Number.isInteger(score.points) || score.points < 0)) {
+      setAdminError('Placements must be positive whole numbers; kills and points must be zero or more.');
+      return;
+    }
+    if (new Set(matchScores.map((score) => score.placement)).size !== matchScores.length) {
+      setAdminError('Each participant must have a different placement.');
+      return;
+    }
+    const hasInvalidPlayerKills = matchScores.some((score) => {
+      const entered = Object.values(score.memberKills || {}).filter((value) => value.trim() !== '');
+      if (entered.length === 0) return false;
+      const registration = registrations.find((row) => row.id === score.registrationId);
+      const roster = registration?.members || [];
+      return roster.length === 0 || roster.some((member) => score.memberKills?.[member.uid]?.trim() === undefined || score.memberKills?.[member.uid]?.trim() === '' || !Number.isInteger(Number(score.memberKills?.[member.uid])) || Number(score.memberKills?.[member.uid]) < 0)
+        || roster.reduce((sum, member) => sum + Number(score.memberKills?.[member.uid]), 0) !== score.kills;
+    });
+    if (hasInvalidPlayerKills) {
+      setAdminError('If you enter individual kills, enter a whole number for every roster member and make their total equal the squad kill total.');
+      return;
+    }
+    setIsFinalizingMatch(true);
+    try {
+      const result = await recordMatchResults(scoreMatchModal.id, matchScores, adminId);
+      if (!result.success) {
+        setAdminError(result.error || 'Could not finalize results.');
+        return;
+      }
+      setScoreMatchModal(null);
+      await loadAllData();
+    } catch (error) {
+      setAdminError(error instanceof Error ? error.message : 'Could not finalize results.');
+    } finally {
+      setIsFinalizingMatch(false);
+    }
   };
 
   // Bans
   const handleConfirmBan = async () => {
     if (!banPlayerModal || !banReasonInput.trim()) return;
-    await banUser(banPlayerModal.id, banReasonInput.trim(), 'p-admin-01');
+    await banUser(banPlayerModal.id, banReasonInput.trim(), adminId);
     setBanPlayerModal(null);
     setBanReasonInput('');
     await loadAllData();
   };
 
   const handleLiftBan = async (playerId: string) => {
-    await unbanUser(playerId, 'p-admin-01');
+    await unbanUser(playerId, adminId);
     await loadAllData();
   };
 
-  // Announcements
-  const handleBroadcastAnnouncement = async (e: React.FormEvent) => {
-    e.preventDefault();
-    await createAnnouncement({
-      title: annTitle.trim(),
-      content: annContent.trim(),
-      category: annCategory,
-      is_pinned: true,
-      tournament_id: selectedTournamentId || undefined,
-    }, 'p-admin-01');
-    setAnnTitle('');
-    setAnnContent('');
-    alert('Announcement broadcasted across player hubs!');
-    await loadAllData();
+  const handleDeletePlayerAccount = async (player: Profile) => {
+    const confirmation = window.prompt(`This permanently deletes ${player.display_name}'s sign-in and player account. Type their username (@${player.username}) to confirm.`);
+    if (confirmation !== player.username) return;
+    setDeletingPlayerId(player.id);
+    setAdminError(null);
+    try {
+      const response = await fetch(`/api/admin/player-account?id=${encodeURIComponent(player.id)}`, { method: 'DELETE' });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Could not delete this player account.');
+      if (expandedPlayerId === player.id) setExpandedPlayerId(null);
+      await loadAllData();
+      if (!result.audit_recorded || !result.rankings_refreshed) {
+        setAdminError(`The player account was deleted.${!result.audit_recorded ? ' Its admin audit entry could not be written.' : ''}${!result.rankings_refreshed ? ' Competitive rankings could not be recalculated.' : ''} Check the server logs.`);
+      }
+    } catch (error) {
+      setAdminError(error instanceof Error ? error.message : 'Could not delete this player account.');
+    } finally {
+      setDeletingPlayerId('');
+    }
   };
 
   // CSV Export
   const handleExportRegistrationsCsv = () => {
     const list = registrations.filter(r => !selectedTournamentId || r.tournament_id === selectedTournamentId);
-    let csv = 'RegistrationCode,TournamentTitle,TeamName,CaptainIGN,CaptainUID,Status,SlotNumber,CreatedAt\n';
+    let csv = 'RegistrationCode,TournamentTitle,TeamName,BGMI_IGN,BGMI_UID,FreeFire_IGN,FreeFire_UID,Status,SlotNumber,CreatedAt\n';
     list.forEach(r => {
       const t = tournaments.find(x => x.id === r.tournament_id);
-      const cap = players.find(x => x.id === r.captain_id);
-      csv += `"${r.registration_code}","${t?.title || ''}","${r.team_name || ''}","${cap?.bgmi_ign || ''}","${cap?.bgmi_uid || ''}","${r.status}",${r.slot_number || 0},"${r.created_at}"\n`;
+      const captain = players.find(x => x.id === r.captain_id);
+      csv += `"${r.registration_code}","${t?.title || ''}","${r.team_name || ''}","${captain?.bgmi_ign || ''}","${captain?.bgmi_uid || ''}","${captain?.free_fire_ign || ''}","${captain?.free_fire_uid || ''}","${r.status}",${r.slot_number || 0},"${r.created_at}"\n`;
     });
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
@@ -365,63 +660,17 @@ export default function SecureAdminPortalPage() {
   // ----------------------------------------------------
   // GATEWAY RENDER: If not authorized, display Security Checkpoint
   // ----------------------------------------------------
-  if (!isAuthenticated) {
+  if (authLoading) {
+    return <div className="min-h-[60vh] flex items-center justify-center font-mono text-xs text-gray-400">Checking organizer access…</div>;
+  }
+  if (!isAdmin) {
     return (
-      <div className="min-h-screen bg-[#07080a] flex items-center justify-center p-4">
-        <div className="w-full max-w-md bg-surface-100 border border-surface-border rounded-3xl p-8 shadow-2xl space-y-6 relative overflow-hidden">
-          <div className="absolute top-0 right-0 -mr-16 -mt-16 w-48 h-48 bg-rose-500/10 rounded-full blur-3xl pointer-events-none" />
-
-          <div className="text-center space-y-2">
-            <div className="w-14 h-14 rounded-2xl bg-rose-950/60 border border-rose-500/40 flex items-center justify-center mx-auto text-rose-400 mb-2 shadow-glow-sm">
-              <Shield className="w-7 h-7" />
-            </div>
-            <h1 className="text-2xl font-display font-black text-white uppercase tracking-wider">
-              VYROX Organizer Command
-            </h1>
-            <p className="text-xs font-mono text-gray-400">
-              Restricted Access • Tournament Administration Portal
-            </p>
-          </div>
-
-          {authError && (
-            <div className="p-3.5 rounded-xl bg-rose-950/50 border border-rose-500/40 text-xs text-rose-300 flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 flex-shrink-0" />
-              <span>{authError}</span>
-            </div>
-          )}
-
-          <form onSubmit={handlePasskeySubmit} className="space-y-4 font-mono text-xs">
-            <div>
-              <label className="block uppercase text-gray-400 mb-1.5 font-bold">
-                Organizer Security Passkey
-              </label>
-              <div className="relative">
-                <Lock className="w-4 h-4 text-gray-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                <input
-                  type="password"
-                  value={inputPasskey}
-                  onChange={(e) => setInputPasskey(e.target.value)}
-                  placeholder="Enter Passkey (Hint: vyrox2026admin)"
-                  required
-                  className="w-full pl-10 pr-4 py-3 rounded-xl bg-surface-200 border border-surface-border text-white text-sm focus:border-rose-500 focus:outline-none"
-                />
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-rose-600 to-rose-500 hover:from-rose-500 hover:to-rose-400 text-white font-bold text-xs uppercase tracking-wider shadow-glow-sm transition-all flex items-center justify-center gap-2"
-            >
-              <Key className="w-4 h-4" />
-              <span>Authenticate & Enter Portal</span>
-            </button>
-          </form>
-
-          <div className="pt-2 border-t border-surface-border text-center">
-            <Link href="/" className="text-xs font-mono text-gray-500 hover:text-gray-300">
-              ← Return to Public Arena
-            </Link>
-          </div>
+      <div className="min-h-[60vh] flex items-center justify-center px-4 py-16">
+        <div className="max-w-md text-center space-y-4">
+          <Shield className="w-10 h-10 text-rose-400 mx-auto" />
+          <h1 className="text-2xl font-display font-bold text-white">Organizer access required</h1>
+          <p className="text-sm text-gray-400">Sign in with an account assigned the admin role to manage tournaments.</p>
+          <Link href="/auth/signin" className="inline-flex px-5 py-2.5 rounded-xl bg-brand-600 text-sm font-semibold text-white">Sign in</Link>
         </div>
       </div>
     );
@@ -430,8 +679,72 @@ export default function SecureAdminPortalPage() {
   // Active counts
   const pendingCount = payments.filter(p => p.payment_status === 'submitted').length;
   const currentTourney = tournaments.find(t => t.id === selectedTournamentId) || tournaments[0];
+  const visibleTournaments = tournaments.filter((tournament) =>
+    tournamentListView === 'archive' ? isArchivedTournament(tournament.status) : !isArchivedTournament(tournament.status)
+  );
+  const editingHasEntries = Boolean(editingTournament && (editingTournament.registered_count || 0) > 0);
   const tourneyConfirmedRegs = registrations.filter(
     r => r.tournament_id === currentTourney?.id && r.status === 'confirmed'
+  );
+  const currentTourneyMatches = matches
+    .filter((match) => match.tournament_id === currentTourney?.id)
+    .sort((a, b) => currentTourney?.tournament_format === 'Battle Royale'
+      ? a.created_at.localeCompare(b.created_at) || a.scheduled_time.localeCompare(b.scheduled_time) || a.id.localeCompare(b.id)
+      : a.round_number - b.round_number || a.match_number - b.match_number);
+  const currentTourneyIsArchived = Boolean(currentTourney && isArchivedTournament(currentTourney.status));
+  const visibleFixtureMatches = currentTourneyMatches.filter((match) => fixtureMatchView === 'active'
+    ? !currentTourneyIsArchived && (match.status === 'scheduled' || match.status === 'live')
+    : currentTourneyIsArchived || match.status === 'completed' || match.status === 'cancelled');
+  const matchDisplayNumbers = new Map(currentTourneyMatches.map((match, index) => [
+    match.id,
+    currentTourney?.tournament_format === 'Battle Royale' ? index + 1 : match.match_number,
+  ] as const));
+  const latestRoundNumber = currentTourneyMatches.length ? Math.max(...currentTourneyMatches.map((match) => match.round_number)) : 0;
+  const latestRoundMatches = currentTourneyMatches.filter((match) => match.round_number === latestRoundNumber);
+  const latestRoundIsComplete = latestRoundMatches.length > 0 && latestRoundMatches.every((match) => match.status === 'completed');
+  const isKnockoutTournament = currentTourney?.tournament_format === 'Single Elimination';
+  const scoreTournament = tournaments.find((tournament) => tournament.id === scoreMatchModal?.tournament_id);
+  const scoreGame = scoreTournament?.game;
+  const winnerTerm = scoreGame === 'Free Fire' ? 'Booyah!' : 'WWCD';
+  const latestRoundWinnerCount = latestRoundMatches.reduce((total, match) => total + (match.participants || []).filter((participant) => participant.is_winner).length, 0);
+  const isKnockoutFinalComplete = isKnockoutTournament && latestRoundIsComplete && latestRoundWinnerCount === 1;
+  const fixtureWorkflowSteps = [
+    { title: 'Approve entries', detail: `${tourneyConfirmedRegs.length} confirmed / ${currentTourney?.max_slots || 0} slots`, done: tourneyConfirmedRegs.length > 0 },
+    { title: 'Create fixtures', detail: currentTourneyMatches.length ? `${currentTourneyMatches.length} match${currentTourneyMatches.length === 1 ? '' : 'es'} across ${latestRoundNumber} round${latestRoundNumber === 1 ? '' : 's'}` : 'Waiting for approved entries', done: currentTourneyMatches.length > 0 },
+    { title: 'Set room details', detail: currentTourneyMatches.length ? `${currentTourneyMatches.filter((match) => match.room_released).length} of ${currentTourneyMatches.length} rooms ready` : 'Set a room after creating a match', done: currentTourneyMatches.length > 0 && currentTourneyMatches.every((match) => match.room_released) },
+    { title: 'Play & score', detail: currentTourneyMatches.length ? `${currentTourneyMatches.filter((match) => match.status === 'completed').length} of ${currentTourneyMatches.length} matches scored` : 'Scores appear after fixtures are created', done: currentTourneyMatches.length > 0 && currentTourneyMatches.every((match) => match.status === 'completed') },
+    { title: isKnockoutTournament ? 'Advance winners' : 'Add next lobby', detail: isKnockoutTournament ? (isKnockoutFinalComplete ? 'Final has a winner' : latestRoundIsComplete ? 'Ready to create the next round' : 'Score every match to unlock') : 'Create another lobby when ready', done: isKnockoutTournament ? latestRoundNumber > 1 || isKnockoutFinalComplete : currentTourneyMatches.length > 1 },
+    { title: 'Complete event', detail: currentTourney?.status === 'completed' ? 'Moved to the organizer archive' : 'Mark completed to archive this event', done: currentTourney?.status === 'completed' || currentTourney?.status === 'cancelled' },
+  ];
+  const completedScoringMatches = currentTourneyMatches.filter((match) => match.status === 'completed');
+  const standingsByEntry = new Map<string, {
+    registrationId: string;
+    name: string;
+    matchesPlayed: number;
+    wins: number;
+    totalPoints: number;
+    totalKills: number;
+  }>();
+  completedScoringMatches.forEach((match) => {
+    (match.participants || []).forEach((participant, index) => {
+      const registrationId = participant.registration_id;
+      const standing = standingsByEntry.get(registrationId) || {
+        registrationId,
+        name: participant.registration?.team_name || participant.registration?.captain?.display_name || `Entry ${index + 1}`,
+        matchesPlayed: 0,
+        wins: 0,
+        totalPoints: 0,
+        totalKills: 0,
+      };
+      standing.matchesPlayed += 1;
+      standing.wins += participant.is_winner ? 1 : 0;
+      standing.totalPoints += Number(participant.points) || 0;
+      standing.totalKills += Number(participant.kills) || 0;
+      standingsByEntry.set(registrationId, standing);
+    });
+  });
+  const tournamentStandings = Array.from(standingsByEntry.values()).sort((a, b) =>
+    b.totalPoints - a.totalPoints || b.totalKills - a.totalKills || b.wins - a.wins || a.name.localeCompare(b.name)
   );
 
   return (
@@ -451,7 +764,7 @@ export default function SecureAdminPortalPage() {
                 </span>
               </div>
               <div className="text-[10px] font-mono text-gray-400 -mt-0.5">
-                Indian Esports BGMI Tournament Administration
+                BGMI &amp; Free Fire Tournament Administration
               </div>
             </div>
           </div>
@@ -487,6 +800,11 @@ export default function SecureAdminPortalPage() {
 
       {/* 2. MAIN ADMIN CONTAINER */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+        {adminError && (
+          <div className="rounded-xl border border-rose-500/40 bg-rose-950/30 px-4 py-3 text-sm text-rose-200">
+            {adminError}
+          </div>
+        )}
         {/* Navigation Tabs */}
         <div className="flex border-b border-surface-border space-x-2 sm:space-x-6 overflow-x-auto pb-1 text-xs font-mono">
           <button
@@ -510,13 +828,23 @@ export default function SecureAdminPortalPage() {
           </button>
 
           <button
+            onClick={() => setActiveTab('payouts')}
+            className={`pb-3 font-bold border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5 ${
+              activeTab === 'payouts' ? 'border-amber-500 text-amber-300' : 'border-transparent text-gray-400 hover:text-gray-200'
+            }`}
+          >
+            <Award className="w-4 h-4" />
+            <span>Prize payouts ({prizeAwards.filter((award) => award.status === 'pending').length})</span>
+          </button>
+
+          <button
             onClick={() => setActiveTab('tournaments')}
             className={`pb-3 font-bold border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5 ${
               activeTab === 'tournaments' ? 'border-brand-500 text-white' : 'border-transparent text-gray-400 hover:text-gray-200'
             }`}
           >
             <Trophy className="w-4 h-4" />
-            <span>Tournament Studio</span>
+            <span>Tournaments</span>
           </button>
 
           <button
@@ -526,7 +854,7 @@ export default function SecureAdminPortalPage() {
             }`}
           >
             <Swords className="w-4 h-4" />
-            <span>Fixture Studio & Rooms</span>
+            <span>Matches & Rooms</span>
           </button>
 
           <button
@@ -535,8 +863,8 @@ export default function SecureAdminPortalPage() {
               activeTab === 'scoring' ? 'border-emerald-500 text-emerald-400' : 'border-transparent text-gray-400 hover:text-gray-200'
             }`}
           >
-            <Sparkles className="w-4 h-4" />
-            <span>Standings & Scoring</span>
+            <Trophy className="w-4 h-4" />
+            <span>Match Results</span>
           </button>
 
           <button
@@ -547,16 +875,6 @@ export default function SecureAdminPortalPage() {
           >
             <Users className="w-4 h-4" />
             <span>Players & Anti-Cheat</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('announcements')}
-            className={`pb-3 font-bold border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5 ${
-              activeTab === 'announcements' ? 'border-brand-500 text-white' : 'border-transparent text-gray-400 hover:text-gray-200'
-            }`}
-          >
-            <Bell className="w-4 h-4" />
-            <span>Announcements</span>
           </button>
 
           <button
@@ -757,6 +1075,35 @@ export default function SecureAdminPortalPage() {
           </div>
         )}
 
+        {activeTab === 'payouts' && (
+          <section className="space-y-4">
+            <div className="rounded-2xl border border-amber-500/20 bg-amber-950/10 p-4">
+              <h3 className="font-display font-bold text-white">Tournament prize payouts</h3>
+              <p className="mt-1 text-xs text-gray-400">Final match results create awards from each tournament’s prize distribution. Send the transfer using your payment provider, then mark the award paid and save its reference here.</p>
+            </div>
+            <div className="rounded-2xl bg-surface-100 border border-surface-border overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-surface-200/60 border-b border-surface-border text-xs uppercase text-gray-400 font-mono">
+                    <tr><th className="py-3 px-4">Tournament / Team</th><th className="py-3 px-4">Prize recipient</th><th className="py-3 px-4 text-center">Place</th><th className="py-3 px-4 text-right">Amount</th><th className="py-3 px-4 text-center">Status</th><th className="py-3 px-4 text-right">Action</th></tr>
+                  </thead>
+                  <tbody className="divide-y divide-surface-border text-xs">
+                    {prizeAwards.map((award) => <tr key={award.id}>
+                      <td className="py-3 px-4"><div className="font-semibold text-white">{award.tournament?.title || 'Tournament'}</div><div className="text-gray-400">{award.registration?.team_name || 'Solo entry'}</div></td>
+                      <td className="py-3 px-4 text-white">{award.recipient?.display_name || award.registration?.captain?.display_name || 'Player'}</td>
+                      <td className="py-3 px-4 text-center text-amber-300">#{award.place}</td>
+                      <td className="py-3 px-4 text-right font-mono font-bold text-amber-200">₹{(award.amount_paise / 100).toLocaleString('en-IN')}</td>
+                      <td className="py-3 px-4 text-center"><span className={`font-bold uppercase ${award.status === 'paid' ? 'text-emerald-300' : 'text-amber-300'}`}>{award.status === 'paid' ? 'Paid' : 'Pending'}</span>{award.transfer_reference && <div className="text-gray-500 mt-1">Ref: {award.transfer_reference}</div>}</td>
+                      <td className="py-3 px-4 text-right">{award.status === 'pending' ? <button type="button" onClick={() => void handleMarkPrizePaid(award)} className="px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white font-bold">Mark paid</button> : <span className="text-gray-500">{award.paid_at ? new Date(award.paid_at).toLocaleDateString('en-IN') : 'Recorded'}</span>}</td>
+                    </tr>)}
+                    {prizeAwards.length === 0 && <tr><td colSpan={6} className="py-12 text-center text-gray-400">No prize awards yet. Awards appear after an event’s final results are scored.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        )}
+
         {/* 5. TAB: TOURNAMENT STUDIO (Extensive Creation on Organizer Terms) */}
         {activeTab === 'tournaments' && (
           <div className="space-y-6">
@@ -764,21 +1111,70 @@ export default function SecureAdminPortalPage() {
               <div>
                 <h3 className="font-display font-bold text-white text-xl">Tournament Management</h3>
                 <p className="text-xs font-mono text-gray-400 mt-0.5">
-                  Configure slots, qualification criteria, prize pools, and release room credentials.
+                  Set registration dates, event time, entry fees, prize payouts, slots, and rooms.
                 </p>
               </div>
 
               <button
-                onClick={() => setCreateTournamentOpen(true)}
+                onClick={() => { setAdminError(null); setEditingTournament(null); setNewTitle(''); setNewSlug(''); setNewDescription(''); setCreateTournamentOpen(true); }}
                 className="px-4 py-2 rounded-xl bg-gradient-to-r from-brand-600 to-cyanAccent-600 hover:from-brand-500 text-white font-bold text-xs uppercase flex items-center gap-2 shadow-glow-sm"
               >
                 <Plus className="w-4 h-4" />
-                <span>Create Custom Game</span>
+                <span>Create Tournament</span>
               </button>
             </div>
 
+            <section className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 p-4 rounded-2xl bg-surface-100 border border-surface-border">
+              <div>
+                <div className="flex items-center gap-2">
+                  <CreditCard className="w-4 h-4 text-cyanAccent-400" />
+                  <h4 className="text-sm font-bold text-white">Paid registration</h4>
+                  <span className={`text-[10px] font-bold uppercase ${paidRegistrationEnabled ? 'text-emerald-300' : 'text-amber-300'}`}>
+                    {paidRegistrationEnabled === null ? 'Setup required' : paidRegistrationEnabled ? 'Enabled' : 'Disabled'}
+                  </span>
+                </div>
+                <p className="text-xs text-gray-400 mt-1 max-w-2xl">
+                  {paidRegistrationEnabled === null
+                    ? 'Apply migration 003_payment_controls_and_private_rosters.sql to add the secure admin switch.'
+                    : !isManualPaymentConfigured()
+                      ? 'Set NEXT_PUBLIC_MANUAL_PAYMENT_ENABLED=true and configure the UPI ID and QR image in .env.local, then restart the server. The switch stays off until these are ready.'
+                      : 'This switch controls paid tournament signups and UPI payment submissions across the platform.'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handlePaidRegistrationToggle}
+                disabled={paidRegistrationEnabled === null || isSavingPaymentSetting || (!paidRegistrationEnabled && !isManualPaymentConfigured())}
+                className={`shrink-0 px-4 py-2 rounded-xl text-xs font-bold uppercase disabled:opacity-40 ${paidRegistrationEnabled ? 'bg-rose-950/60 border border-rose-500/30 text-rose-200' : 'bg-emerald-700 text-white'}`}
+              >
+                {isSavingPaymentSetting ? 'Saving…' : paidRegistrationEnabled ? 'Disable paid entry' : 'Enable paid entry'}
+              </button>
+            </section>
+
+            <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-2xl bg-surface-100 border border-surface-border">
+              <div className="flex gap-2" role="tablist" aria-label="Tournament lists">
+                <button
+                  type="button"
+                  onClick={() => setTournamentListView('active')}
+                  className={`px-4 py-2 rounded-xl text-xs font-mono font-bold ${tournamentListView === 'active' ? 'bg-brand-600 text-white' : 'text-gray-400 hover:text-white'}`}
+                >
+                  Active events ({tournaments.filter((t) => !isArchivedTournament(t.status)).length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTournamentListView('archive')}
+                  className={`px-4 py-2 rounded-xl text-xs font-mono font-bold ${tournamentListView === 'archive' ? 'bg-surface-200 text-cyanAccent-400' : 'text-gray-400 hover:text-white'}`}
+                >
+                  Past events ({tournaments.filter((t) => isArchivedTournament(t.status)).length})
+                </button>
+              </div>
+              <p className="text-xs text-gray-400">
+                Completed and cancelled events move to Past events automatically.
+              </p>
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {tournaments.map((t) => (
+              {visibleTournaments.map((t) => (
                 <div key={t.id} className="p-6 rounded-3xl bg-surface-100 border border-surface-border space-y-4">
                   <div className="flex items-start justify-between gap-4">
                     <div>
@@ -790,9 +1186,49 @@ export default function SecureAdminPortalPage() {
                         <span>•</span>
                         <span>Slots: {t.registered_count || 0} / {t.max_slots}</span>
                       </div>
+                      <div className="text-[11px] text-gray-400 mt-2">
+                        Registration: {new Date(t.registration_opens_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} – {new Date(t.registration_closes_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST
+                        <span className="mx-2">•</span>
+                        Event: {new Date(t.start_time).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST
+                      </div>
+                      <div className="text-[11px] text-gray-400 mt-1">
+                        Entry: {t.entry_fee_paise === 0 ? 'Free' : `₹${(t.entry_fee_paise / 100).toLocaleString('en-IN')}`} · Prize: ₹{(t.prize_pool_paise / 100).toLocaleString('en-IN')}
+                      </div>
                     </div>
                     <StatusBadge status={t.status} size="sm" />
                   </div>
+
+                  <details className="rounded-xl bg-surface-200/70 border border-surface-border">
+                    <summary className="cursor-pointer list-none px-4 py-3 flex items-center justify-between gap-3 text-xs font-bold text-white">
+                      <span>Participant roster · captain and in-game IDs</span>
+                      <span className="text-cyanAccent-300">{registrations.filter((registration) => registration.tournament_id === t.id && ['confirmed', 'payment_submitted', 'pending_payment'].includes(registration.status)).length} slots</span>
+                    </summary>
+                    <div className="border-t border-surface-border divide-y divide-surface-border">
+                      {registrations
+                        .filter((registration) => registration.tournament_id === t.id && ['confirmed', 'payment_submitted', 'pending_payment'].includes(registration.status))
+                        .sort((a, b) => (a.slot_number || 0) - (b.slot_number || 0))
+                        .map((registration, index) => (
+                          <div key={registration.id} className="px-4 py-3 text-xs">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <strong className="text-white">Slot #{registration.slot_number || index + 1} · {registration.team_name || 'Unnamed team'}</strong>
+                              <span className="text-gray-400">Captain: {registration.captain?.display_name || 'Unknown'} · {registration.status.replace('_', ' ')}</span>
+                            </div>
+                            <div className="grid sm:grid-cols-2 gap-2 mt-2">
+                              {(registration.members || []).map((member) => (
+                                <div key={member.id} className="rounded-lg bg-surface-100 px-3 py-2 text-gray-300">
+                                  <span className="font-semibold text-cyanAccent-300">{member.role === 'captain' ? 'Captain' : 'Player'}:</span> {member.ign}
+                                  <span className="text-gray-500"> · ID {member.uid}</span>
+                                </div>
+                              ))}
+                              {(!registration.members || registration.members.length === 0) && <span className="text-gray-500">No player IDs recorded.</span>}
+                            </div>
+                          </div>
+                        ))}
+                      {registrations.filter((registration) => registration.tournament_id === t.id && ['confirmed', 'payment_submitted', 'pending_payment'].includes(registration.status)).length === 0 && (
+                        <p className="px-4 py-3 text-xs text-gray-500">No players have reserved a slot yet.</p>
+                      )}
+                    </div>
+                  </details>
 
                   {/* Room status preview */}
                   <div className="p-3 rounded-xl bg-surface-200 border border-surface-border text-xs font-mono flex items-center justify-between">
@@ -818,14 +1254,12 @@ export default function SecureAdminPortalPage() {
                       <span className="text-gray-400">Status:</span>
                       <select
                         value={t.status}
-                        onChange={async (e) => {
-                          await updateTournamentStatus(t.id, e.target.value as any, undefined, 'p-admin-01');
-                          await loadAllData();
-                        }}
+                        onChange={(e) => handleTournamentStatusChange(t, e.target.value as TournamentStatus)}
                         className="px-2.5 py-1 rounded bg-surface-200 border border-surface-border text-white text-xs"
                       >
                         <option value="draft">Draft</option>
                         <option value="open">Open</option>
+                        <option value="registration_closed">Registration closed</option>
                         <option value="live">Live</option>
                         <option value="completed">Completed</option>
                         <option value="cancelled">Cancelled</option>
@@ -834,20 +1268,45 @@ export default function SecureAdminPortalPage() {
 
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={() => {
+                        type="button"
+                        onClick={() => openTournamentEditor(t)}
+                        className="px-3 py-1.5 rounded-lg bg-surface-200 hover:bg-surface-50 border border-surface-border text-white flex items-center gap-1.5 font-bold"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                        <span>Edit details</span>
+                      </button>
+                      <button
+                        onClick={async () => {
+                          setAdminError(null);
                           setReleaseRoomModal(t);
-                          setCustomRoomId(t.room_id || '');
-                          setCustomRoomPass(t.room_password || '');
+                          const credentials = await getTournamentRoomCredentials(t.id);
+                          setCustomRoomId(credentials?.room_id || '');
+                          setCustomRoomPass(credentials?.room_password || '');
                         }}
                         className="px-3 py-1.5 rounded-lg bg-surface-200 hover:bg-surface-50 border border-surface-border text-cyanAccent-400 flex items-center gap-1.5 font-bold"
                       >
                         <Key className="w-3.5 h-3.5" />
                         <span>Set Room & Pass</span>
                       </button>
+                      {tournamentListView === 'archive' && (
+                        <button
+                          type="button"
+                          onClick={() => void handleDeleteArchivedTournament(t)}
+                          className="px-3 py-1.5 rounded-lg bg-rose-950/60 hover:bg-rose-900 border border-rose-500/30 text-rose-200 flex items-center gap-1.5 font-bold"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Delete event</span>
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
               ))}
+              {visibleTournaments.length === 0 && (
+                <div className="md:col-span-2 rounded-2xl bg-surface-100 border border-surface-border p-10 text-center text-sm text-gray-400">
+                  {tournamentListView === 'archive' ? 'No completed or cancelled events yet.' : 'No active events yet. Create a tournament to get started.'}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -855,46 +1314,115 @@ export default function SecureAdminPortalPage() {
         {/* 6. TAB: FIXTURE STUDIO & ROOMS */}
         {activeTab === 'fixtures' && (
           <div className="space-y-6">
+            <section className="p-6 rounded-3xl bg-surface-100 border border-surface-border space-y-5">
+              <div>
+                <div className="text-[11px] uppercase tracking-widest text-cyanAccent-400 font-bold">Tournament flow</div>
+                <h3 className="text-xl font-display font-bold text-white mt-1">Follow the event from signup to final result</h3>
+                <p className="text-xs text-gray-400 mt-1">Choose an event below. Each step shows what is finished and what the organizer should do next.</p>
+              </div>
+              <div className="flex flex-col md:flex-row md:items-stretch gap-2">
+                {fixtureWorkflowSteps.map((step, index) => {
+                  const currentStepIndex = fixtureWorkflowSteps.findIndex((item) => !item.done);
+                  const isCurrent = currentStepIndex === index;
+                  return (
+                    <React.Fragment key={step.title}>
+                      <div className={`flex-1 min-w-0 rounded-2xl border p-3 ${step.done ? 'border-emerald-500/40 bg-emerald-950/20' : isCurrent ? 'border-cyanAccent-500/50 bg-cyanAccent-950/20' : 'border-surface-border bg-surface-200/50'}`}>
+                        <div className="flex items-center gap-2">
+                          <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-black ${step.done ? 'bg-emerald-500 text-black' : isCurrent ? 'bg-cyanAccent-500 text-black' : 'bg-surface-100 text-gray-400'}`}>{step.done ? '✓' : index + 1}</span>
+                          <strong className={`text-xs ${step.done ? 'text-emerald-300' : isCurrent ? 'text-cyanAccent-300' : 'text-gray-300'}`}>{step.title}</strong>
+                        </div>
+                        <p className="text-[10px] leading-relaxed text-gray-400 mt-2">{step.detail}</p>
+                      </div>
+                      {index < fixtureWorkflowSteps.length - 1 && <div className="hidden md:flex items-center text-gray-600 px-0.5">›</div>}
+                    </React.Fragment>
+                  );
+                })}
+              </div>
+              <div className="rounded-xl bg-surface-200 px-4 py-3 text-xs text-gray-300">
+                {isKnockoutTournament
+                  ? 'Knockout: generate the first round, add room details, enter scores and mark one winner per match. Once every match is scored, create the next round from those winners.'
+                  : 'Battle Royale: create a lobby for all confirmed entries, add its room details, then enter placements and kills. Add another lobby for each additional map or match.'}
+              </div>
+            </section>
+
             <div className="p-6 rounded-3xl bg-surface-100 border border-surface-border space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
                   <span className="text-xs font-mono uppercase text-gray-400 font-bold">Select Competition:</span>
                   <select
                     value={selectedTournamentId}
-                    onChange={(e) => setSelectedTournamentId(e.target.value)}
+                    onChange={(e) => {
+                      const tournament = tournaments.find((item) => item.id === e.target.value);
+                      setSelectedTournamentId(e.target.value);
+                      if (tournament) setCmMap(tournament.game === 'BGMI' ? 'Erangel' : 'Bermuda');
+                    }}
                     className="px-3 py-2 rounded-xl bg-surface-200 border border-surface-border text-white text-xs font-mono"
                   >
-                    {tournaments.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.title} ({t.mode} • {t.tournament_format})
-                      </option>
-                    ))}
+                    {!selectedTournamentId && <option value="">Choose a tournament</option>}
+                    <optgroup label="Active events">
+                      {tournaments.filter((t) => !isArchivedTournament(t.status)).map((t) => (
+                        <option key={t.id} value={t.id}>{t.title} ({t.mode} · {t.tournament_format})</option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Past events">
+                      {tournaments.filter((t) => isArchivedTournament(t.status)).map((t) => (
+                        <option key={t.id} value={t.id}>{t.title} · {t.status}</option>
+                      ))}
+                    </optgroup>
                   </select>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={handleGenerateStandardFixtures}
-                    className="px-3.5 py-2 rounded-xl bg-surface-200 hover:bg-surface-50 border border-surface-border text-white font-mono text-xs flex items-center gap-1.5"
-                  >
-                    <Swords className="w-3.5 h-3.5 text-cyanAccent-400" />
-                    <span>Auto-Generate from Confirmed ({tourneyConfirmedRegs.length} Squads)</span>
-                  </button>
-
-                  <button
-                    onClick={() => setCustomMatchModal(true)}
-                    className="px-4 py-2 rounded-xl bg-gradient-to-r from-brand-600 to-cyanAccent-600 text-white font-mono font-bold text-xs uppercase flex items-center gap-1.5 shadow-glow-sm"
-                  >
-                    <Plus className="w-4 h-4" />
-                    <span>Build Custom Lobby / Round</span>
-                  </button>
-                </div>
+                {fixtureMatchView === 'active' && !currentTourneyIsArchived && <div className="flex flex-wrap items-center gap-2">
+                  {isKnockoutTournament ? (
+                    currentTourneyMatches.length === 0 ? (
+                      <button
+                        disabled={!selectedTournamentId || tourneyConfirmedRegs.length < 2}
+                        onClick={handleGenerateStandardFixtures}
+                        className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-brand-600 to-cyanAccent-600 text-white font-bold text-xs disabled:opacity-40"
+                      >
+                        Generate first bracket round ({tourneyConfirmedRegs.length} confirmed)
+                      </button>
+                    ) : (
+                      <button
+                        disabled={!latestRoundIsComplete || isKnockoutFinalComplete}
+                        onClick={handleAdvanceEliminationRound}
+                        className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-brand-600 to-cyanAccent-600 text-white font-bold text-xs disabled:opacity-40"
+                      >
+                        {isKnockoutFinalComplete ? 'Final complete' : `Create next round from winners${latestRoundIsComplete ? '' : ' · score current round first'}`}
+                      </button>
+                    )
+                  ) : currentTourneyMatches.length === 0 ? (
+                    <button
+                      disabled={!selectedTournamentId || tourneyConfirmedRegs.length === 0}
+                      onClick={handleGenerateStandardFixtures}
+                      className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-brand-600 to-cyanAccent-600 text-white font-bold text-xs disabled:opacity-40"
+                    >
+                      Create first lobby ({tourneyConfirmedRegs.length} confirmed)
+                    </button>
+                  ) : null}
+                  {!isKnockoutTournament && (
+                    <button
+                      disabled={!selectedTournamentId || tourneyConfirmedRegs.length === 0}
+                      onClick={() => {
+                        setAdminError(null);
+                        const nextMatchNumber = Math.max(currentTourneyMatches.length, 0, ...currentTourneyMatches.map((match) => match.match_number || 0)) + 1;
+                        setCmRoundLabel(`Match ${nextMatchNumber}`);
+                        setCmMap(currentTourney?.game === 'Free Fire' ? 'Bermuda' : 'Erangel');
+                        setCmTime(toIstDateTimeInput(new Date(Date.now() + 2 * 60 * 60_000)));
+                        setCustomMatchModal(true);
+                      }}
+                      className="px-4 py-2 rounded-xl bg-surface-200 hover:bg-surface-50 border border-surface-border text-white font-bold text-xs disabled:opacity-40"
+                    >
+                      <Plus className="w-4 h-4 inline mr-1" /> Add another Battle Royale lobby
+                    </button>
+                  )}
+                </div>}
               </div>
 
               {/* Tournament Confirmed Squads preview */}
               <div className="p-4 rounded-2xl bg-surface-200/50 border border-surface-border space-y-2">
                 <div className="text-xs font-mono text-gray-400 uppercase font-bold flex items-center justify-between">
-                  <span>Eligible Confirmed Squads for this Tournament ({tourneyConfirmedRegs.length}):</span>
+                  <span>Confirmed entries for this tournament ({tourneyConfirmedRegs.length}):</span>
                   <span className="text-emerald-400">Only these squads receive Room ID & Password</span>
                 </div>
                 <div className="flex flex-wrap gap-2 pt-1 font-mono text-xs">
@@ -914,16 +1442,44 @@ export default function SecureAdminPortalPage() {
               </div>
             </div>
 
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-surface-border bg-surface-100 p-3">
+              <div className="flex gap-2" role="tablist" aria-label="Match and room status">
+                <button type="button" onClick={() => setFixtureMatchView('active')} className={`rounded-xl px-4 py-2 text-xs font-mono font-bold ${fixtureMatchView === 'active' ? 'bg-brand-600 text-white' : 'text-gray-400 hover:text-white'}`}>
+                  Upcoming &amp; live ({currentTourneyMatches.filter((match) => match.status === 'scheduled' || match.status === 'live').length})
+                </button>
+                <button type="button" onClick={() => setFixtureMatchView('past')} className={`rounded-xl px-4 py-2 text-xs font-mono font-bold ${fixtureMatchView === 'past' ? 'bg-surface-200 text-cyanAccent-300' : 'text-gray-400 hover:text-white'}`}>
+                  Completed &amp; cancelled ({currentTourneyMatches.filter((match) => match.status === 'completed' || match.status === 'cancelled').length})
+                </button>
+              </div>
+              <p className="text-xs text-gray-400">Archived events and completed or cancelled matches appear in the past list.</p>
+            </div>
+
             {/* Fixture Cards */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {matches
-                .filter(m => !selectedTournamentId || m.tournament_id === selectedTournamentId)
-                .map((m) => (
+              {currentTourneyMatches.length === 0 && (
+                <div className="md:col-span-2 rounded-2xl bg-surface-100 border border-surface-border p-10 text-center space-y-2">
+                  <Swords className="w-9 h-9 text-gray-600 mx-auto" />
+                  <h4 className="font-display font-bold text-white">No fixtures yet</h4>
+                  <p className="text-xs text-gray-400">{currentTourneyIsArchived ? 'This event is archived; its matches are shown under Completed & cancelled.' : 'Approve entries, then use the button above to create the first bracket round or lobby.'}</p>
+                </div>
+              )}
+              {currentTourneyMatches.length > 0 && visibleFixtureMatches.length === 0 && (
+                <div className="md:col-span-2 rounded-2xl bg-surface-100 border border-surface-border p-8 text-center text-sm text-gray-400">
+                  {fixtureMatchView === 'active' ? 'There are no upcoming or live matches. Open Completed & cancelled to review past matches.' : 'There are no completed or cancelled matches yet.'}
+                </div>
+              )}
+              {visibleFixtureMatches.map((m) => (
                   <div key={m.id} className="p-6 rounded-3xl bg-surface-100 border border-surface-border space-y-4">
                     <div className="flex items-center justify-between border-b border-surface-border pb-3">
                       <div>
-                        <h4 className="font-display font-bold text-white text-base">{m.round_label}</h4>
-                        <div className="text-xs font-mono text-cyanAccent-400">Format: {m.format}</div>
+                        <h4 className="font-display font-bold text-white text-base">
+                          {currentTourney?.tournament_format === 'Battle Royale' ? `Match ${matchDisplayNumbers.get(m.id)}` : m.round_label}
+                        </h4>
+                        <div className="text-xs font-mono text-cyanAccent-400">
+                          {currentTourney?.tournament_format === 'Battle Royale'
+                            ? getBattleRoyaleLobbyDescription(m.round_label)
+                            : `Format: ${m.format}`}
+                        </div>
                       </div>
                       <StatusBadge status={m.status} size="sm" />
                     </div>
@@ -939,17 +1495,16 @@ export default function SecureAdminPortalPage() {
                         <div className="font-bold text-cyanAccent-400 text-sm select-all">{m.room_password || 'Not Set'}</div>
                       </div>
                       <button
-                        onClick={async () => {
-                          const newId = prompt('Enter BGMI Room ID for this match:', m.room_id || '981726');
-                          const newPass = prompt('Enter BGMI Room Password:', m.room_password || 'VYROX99');
-                          if (newId && newPass) {
-                            await releaseMatchRoomCredentials(m.id, newId, newPass, 'p-admin-01');
-                            await loadAllData();
-                          }
+                        disabled={currentTourneyIsArchived || fixtureMatchView === 'past' || m.status === 'completed' || m.status === 'cancelled'}
+                        onClick={() => {
+                          setAdminError(null);
+                          setReleaseMatchModal(m);
+                          setMatchRoomId(m.room_id || '');
+                          setMatchRoomPass(m.room_password || '');
                         }}
-                        className="px-2.5 py-1 rounded bg-surface-100 border border-surface-border text-xs text-cyanAccent-400 hover:text-white"
+                        className="px-2.5 py-1 rounded bg-surface-100 border border-surface-border text-xs text-cyanAccent-400 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
                       >
-                        Edit Credentials
+                        {m.room_released ? 'Edit room' : 'Set room'}
                       </button>
                     </div>
 
@@ -973,73 +1528,221 @@ export default function SecureAdminPortalPage() {
 
                     <div className="pt-2 flex justify-end">
                       <button
+                        disabled={currentTourneyIsArchived || fixtureMatchView === 'past' || m.status === 'completed' || m.status === 'cancelled'}
                         onClick={() => {
+                          setAdminError(null);
                           setScoreMatchModal(m);
                           setMatchScores(
-                            (m.participants || []).map(p => ({
+                            (m.participants || []).map((p, index) => ({
                               registrationId: p.registration_id,
                               kills: p.kills,
                               points: p.points,
                               isWinner: p.is_winner,
-                              placement: p.placement || 1,
+                              placement: p.placement || index + 1,
+                                  memberKills: {},
                             }))
                           );
                         }}
-                        className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-cyanAccent-600 text-white font-mono font-bold text-xs uppercase"
+                        className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-cyanAccent-600 text-white font-mono font-bold text-xs uppercase disabled:opacity-50"
                       >
-                        Enter Placements & Kills
+                        {currentTourneyIsArchived ? 'Event archived' : m.status === 'completed' ? 'Results finalized' : m.status === 'cancelled' ? 'Match cancelled' : fixtureMatchView === 'past' ? 'Past match' : 'Enter match results'}
                       </button>
                     </div>
                   </div>
-                ))}
+              ))}
             </div>
           </div>
         )}
 
-        {/* 7. TAB: STANDINGS & SCORING */}
+        {/* 7. TAB: MATCH RESULTS */}
         {activeTab === 'scoring' && (
           <div className="space-y-6">
-            <div className="p-6 rounded-3xl bg-surface-100 border border-surface-border space-y-4">
-              <h3 className="font-display font-bold text-white text-lg">
-                Tournament Standings & Qualification Engine
-              </h3>
-              <p className="text-xs font-mono text-gray-400">
-                Matches marked as completed automatically calculate placement points and update national player ratings.
-              </p>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-                {matches
-                  .filter(m => m.status === 'completed')
-                  .map((m) => (
-                    <div key={m.id} className="p-5 rounded-2xl bg-surface-200 border border-surface-border space-y-3 font-mono text-xs">
-                      <div className="flex items-center justify-between border-b border-surface-border pb-2">
-                        <span className="font-bold text-white">{m.round_label}</span>
-                        <span className="text-emerald-400 font-bold">SCORED & FINALIZED</span>
-                      </div>
-                      <div className="space-y-1">
-                        {m.participants?.map((p, idx) => (
-                          <div key={idx} className="flex items-center justify-between p-1.5 rounded bg-surface-100">
-                            <span>#{p.placement || idx + 1} {p.registration?.team_name}</span>
-                            <span className="font-bold text-amber-300">{p.points} PTS ({p.kills} Kills)</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
+            <section className="p-6 rounded-3xl bg-surface-100 border border-surface-border space-y-5">
+              <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
+                <div>
+                  <p className="text-xs font-mono uppercase tracking-wider text-emerald-400 font-bold">Review final scores</p>
+                  <h3 className="mt-1 font-display font-bold text-white text-xl">{currentTourney?.title || 'Choose a tournament'}</h3>
+                  <p className="mt-2 text-sm text-gray-400">This page shows saved match results and the event standings. Enter scores in Matches & Rooms.</p>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-3 sm:items-end">
+                  <label className="text-xs font-mono text-gray-400">
+                    Tournament
+                    <select
+                      value={selectedTournamentId}
+                      onChange={(event) => setSelectedTournamentId(event.target.value)}
+                      className="mt-1 block w-full sm:min-w-64 px-3 py-2.5 rounded-xl bg-surface-200 border border-surface-border text-white"
+                    >
+                      {!selectedTournamentId && <option value="">Choose a tournament</option>}
+                      {tournaments.map((tournament) => (
+                        <option key={tournament.id} value={tournament.id}>{tournament.title}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('fixtures')}
+                    className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold"
+                  >
+                    Go to Matches & Rooms to enter scores
+                  </button>
+                </div>
               </div>
-            </div>
+
+              <div className="rounded-2xl border border-surface-border bg-surface-200/60 p-4 space-y-3">
+                <h4 className="text-sm font-bold text-white">How scoring works</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                  <div className="rounded-xl bg-surface-100 p-3">
+                    <p className="text-xs font-bold text-cyanAccent-300">1. Finish position</p>
+                    <p className="mt-1 text-xs leading-relaxed text-gray-400">Where the player or squad finished. Enter 1 for first place, 2 for second, and so on.</p>
+                  </div>
+                  <div className="rounded-xl bg-surface-100 p-3">
+                    <p className="text-xs font-bold text-cyanAccent-300">2. Kills</p>
+                    <p className="mt-1 text-xs leading-relaxed text-gray-400">Enter the verified total kills for this match. Individual squad kills are optional.</p>
+                  </div>
+                  <div className="rounded-xl bg-surface-100 p-3">
+                    <p className="text-xs font-bold text-amber-300">3. Tournament points</p>
+                    <p className="mt-1 text-xs leading-relaxed text-gray-400">Enter points from your event’s score sheet. Battle Royale and round-robin standings add these totals; elimination events advance by match winner.</p>
+                  </div>
+                  <div className="rounded-xl bg-surface-100 p-3">
+                    <p className="text-xs font-bold text-emerald-300">4. VYROX rating</p>
+                    <p className="mt-1 text-xs leading-relaxed text-gray-400">Updates when finalized: placement and kills for Battle Royale or round robin, and match win/loss for elimination.</p>
+                  </div>
+                </div>
+                <p className="text-xs leading-relaxed text-gray-400">Mark exactly one winner in each match. For knockout events, return to Matches & Rooms after scoring a full round to create the next round from its winners. Prize awards appear in Prize Payouts after the event’s final results.</p>
+              </div>
+            </section>
+
+            {currentTourney && currentTourney.tournament_format !== 'Single Elimination' && (
+              <section className="rounded-3xl bg-surface-100 border border-surface-border overflow-hidden">
+                <div className="p-5 border-b border-surface-border">
+                  <h3 className="font-display font-bold text-white text-lg">Tournament standings</h3>
+                  <p className="mt-1 text-xs text-gray-400">Totals from finalized matches, ranked by points, then kills, then match wins.</p>
+                </div>
+                {tournamentStandings.length === 0 ? (
+                  <div className="p-8 text-center">
+                    <p className="font-semibold text-white">No scores saved yet</p>
+                    <p className="mt-1 text-sm text-gray-400">When you finalize match results, the standings will appear here.</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                      <thead className="bg-surface-200 text-xs uppercase text-gray-400">
+                        <tr>
+                          <th className="px-4 py-3">Rank</th>
+                          <th className="px-4 py-3">Player / squad</th>
+                          <th className="px-4 py-3 text-center">Matches</th>
+                          <th className="px-4 py-3 text-center">Match wins</th>
+                          <th className="px-4 py-3 text-center">Tournament points</th>
+                          <th className="px-4 py-3 text-center">Kills</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-surface-border">
+                        {tournamentStandings.map((standing, index) => (
+                          <tr key={standing.registrationId}>
+                            <td className="px-4 py-3 font-mono font-bold text-amber-300">{placeOrdinal(index + 1)}</td>
+                            <td className="px-4 py-3 font-semibold text-white">{standing.name}</td>
+                            <td className="px-4 py-3 text-center text-gray-300">{standing.matchesPlayed}</td>
+                            <td className="px-4 py-3 text-center text-gray-300">{standing.wins}</td>
+                            <td className="px-4 py-3 text-center font-bold text-amber-300">{standing.totalPoints}</td>
+                            <td className="px-4 py-3 text-center font-bold text-cyanAccent-300">{standing.totalKills}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+            )}
+
+            {currentTourney?.tournament_format === 'Single Elimination' && (
+              <div className="rounded-2xl border border-cyanAccent-500/30 bg-cyanAccent-950/20 p-4 text-sm text-cyanAccent-100">
+                Knockout event: each match winner advances to the next round. See the completed matches below, then use Matches & Rooms to create the next round.
+              </div>
+            )}
+
+            <section className="space-y-3">
+              <div className="flex items-end justify-between gap-3">
+                <div>
+                  <h3 className="font-display font-bold text-white text-lg">Completed matches</h3>
+                  <p className="text-xs text-gray-400">The official result saved for each match in this tournament.</p>
+                </div>
+                <span className="text-xs font-mono text-gray-400">{completedScoringMatches.length} scored</span>
+              </div>
+              {!currentTourney ? (
+                <div className="p-8 rounded-2xl bg-surface-100 border border-surface-border text-center">
+                  <p className="font-semibold text-white">No tournament is available yet.</p>
+                  <p className="mt-1 text-sm text-gray-400">Create an event in Tournament Studio, then return here to review its results.</p>
+                </div>
+              ) : completedScoringMatches.length === 0 ? (
+                <div className="p-8 rounded-2xl bg-surface-100 border border-surface-border text-center">
+                  <p className="font-semibold text-white">There are no completed matches for this tournament.</p>
+                  <p className="mt-1 text-sm text-gray-400">Open Matches & Rooms to set up matches and record results after they are played.</p>
+                </div>
+              ) : completedScoringMatches.map((match) => {
+                const sortedParticipants = [...(match.participants || [])].sort((a, b) =>
+                  (a.placement || Number.MAX_SAFE_INTEGER) - (b.placement || Number.MAX_SAFE_INTEGER)
+                );
+                const displayMatchNumber = matchDisplayNumbers.get(match.id) ?? match.match_number;
+                return (
+                  <article key={match.id} className="rounded-2xl bg-surface-100 border border-surface-border overflow-hidden">
+                    <div className="p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-surface-border">
+                      <div>
+                        <p className="text-xs font-mono text-cyanAccent-300">
+                          {currentTourney?.tournament_format === 'Battle Royale'
+                            ? `Match ${displayMatchNumber} · Battle Royale`
+                            : `Round ${match.round_number} · Match ${match.match_number} · ${match.format}`}
+                        </p>
+                        <h4 className="mt-1 font-bold text-white">
+                          {currentTourney?.tournament_format === 'Battle Royale'
+                            ? getBattleRoyaleLobbyDescription(match.round_label)
+                            : match.round_label}
+                        </h4>
+                      </div>
+                      <span className="inline-flex w-fit items-center gap-2 rounded-full bg-emerald-950/60 px-3 py-1 text-xs font-bold text-emerald-300">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Results saved
+                      </span>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-sm">
+                        <thead className="bg-surface-200/60 text-[11px] uppercase text-gray-400">
+                          <tr>
+                            <th className="px-4 py-2.5">Finish</th>
+                            <th className="px-4 py-2.5">Player / squad</th>
+                            <th className="px-4 py-2.5">Outcome</th>
+                            <th className="px-4 py-2.5 text-center">Tournament points</th>
+                            <th className="px-4 py-2.5 text-center">Kills</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-surface-border">
+                          {sortedParticipants.map((participant) => (
+                            <tr key={participant.id}>
+                              <td className="px-4 py-3 font-mono text-gray-200">{participant.placement ? placeOrdinal(participant.placement) : 'Not entered'}</td>
+                              <td className="px-4 py-3 font-semibold text-white">{participant.registration?.team_name || participant.registration?.captain?.display_name || 'Player / squad'}</td>
+                              <td className="px-4 py-3">{participant.is_winner ? <span className="text-amber-300 font-bold">Winner · {currentTourney?.game === 'Free Fire' ? 'Booyah!' : 'WWCD'}</span> : <span className="text-gray-500">—</span>}</td>
+                              <td className="px-4 py-3 text-center font-bold text-amber-300">{participant.points}</td>
+                              <td className="px-4 py-3 text-center font-bold text-cyanAccent-300">{participant.kills}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </article>
+                );
+              })}
+            </section>
           </div>
         )}
 
         {/* 8. TAB: PLAYERS & ANTI-CHEAT BANS */}
         {activeTab === 'players' && (
           <div className="space-y-4">
+            <GameIdVerificationInbox players={players} />
             <div className="p-4 rounded-2xl bg-surface-100 border border-surface-border">
               <input
                 type="text"
                 value={playerSearch}
                 onChange={(e) => setPlayerSearch(e.target.value)}
-                placeholder="Search player database by BGMI IGN, UID, or username..."
+                placeholder="Search players by BGMI ID, Free Fire ID, or username..."
                 className="w-full px-4 py-2.5 rounded-xl bg-surface-200 border border-surface-border text-white text-xs font-mono focus:outline-none"
               />
             </div>
@@ -1050,7 +1753,7 @@ export default function SecureAdminPortalPage() {
                   <thead className="bg-surface-200/60 border-b border-surface-border text-xs uppercase text-gray-400">
                     <tr>
                       <th className="py-3 px-4">Player</th>
-                      <th className="py-3 px-4">BGMI Identity</th>
+                      <th className="py-3 px-4">Game Identities</th>
                       <th className="py-3 px-4 text-center">Rating</th>
                       <th className="py-3 px-4 text-center">Status</th>
                       <th className="py-3 px-4 text-right">Anti-Cheat Enforcement</th>
@@ -1063,18 +1766,23 @@ export default function SecureAdminPortalPage() {
                         return (
                           p.display_name.toLowerCase().includes(q) ||
                           p.username.toLowerCase().includes(q) ||
-                          (p.bgmi_ign && p.bgmi_ign.toLowerCase().includes(q))
+                          (p.bgmi_ign && p.bgmi_ign.toLowerCase().includes(q)) ||
+                          (p.free_fire_ign && p.free_fire_ign.toLowerCase().includes(q))
                         );
                       })
                       .map((p) => (
-                        <tr key={p.id} className="hover:bg-surface-50/50">
+                        <React.Fragment key={p.id}>
+                        <tr className="hover:bg-surface-50/50">
                           <td className="py-3 px-4">
                             <div className="font-bold text-white">{p.display_name}</div>
                             <div className="text-gray-400 text-[11px]">@{p.username}</div>
+                            <button type="button" onClick={() => setExpandedPlayerId(expandedPlayerId === p.id ? null : p.id)} className="mt-1 text-[11px] font-bold text-cyanAccent-300 hover:text-white">
+                              {expandedPlayerId === p.id ? 'Hide account history' : 'View full account history'}
+                            </button>
                           </td>
                           <td className="py-3 px-4">
-                            <div className="text-cyanAccent-400 font-bold">{p.bgmi_ign || 'N/A'}</div>
-                            <div className="text-gray-400 text-[11px]">UID: {p.bgmi_uid || 'N/A'}</div>
+                            <div className="text-cyanAccent-400 font-bold">BGMI: {p.bgmi_ign || 'N/A'} <span className="text-gray-500">{p.bgmi_uid || ''}</span></div>
+                            <div className="text-orange-300 text-[11px]">Free Fire: {p.free_fire_ign || 'N/A'} <span className="text-gray-500">{p.free_fire_uid || ''}</span></div>
                           </td>
                           <td className="py-3 px-4 text-center font-bold text-brand-400">
                             {p.current_rating} PTS
@@ -1083,6 +1791,7 @@ export default function SecureAdminPortalPage() {
                             <StatusBadge status={p.account_status} size="sm" />
                           </td>
                           <td className="py-3 px-4 text-right">
+                            <div className="flex flex-wrap justify-end gap-2">
                             {p.account_status === 'banned' ? (
                               <button
                                 onClick={() => handleLiftBan(p.id)}
@@ -1101,52 +1810,26 @@ export default function SecureAdminPortalPage() {
                                 Ban Account
                               </button>
                             )}
+                            {p.role === 'player' && p.id !== adminId && (
+                              <button
+                                type="button"
+                                disabled={deletingPlayerId === p.id}
+                                onClick={() => void handleDeletePlayerAccount(p)}
+                                className="inline-flex items-center gap-1 rounded-lg bg-rose-950/60 px-3 py-1 text-xs font-bold text-rose-200 border border-rose-500/30 disabled:opacity-50"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" /> {deletingPlayerId === p.id ? 'Deleting…' : 'Delete account'}
+                              </button>
+                            )}
+                            </div>
                           </td>
                         </tr>
+                        {expandedPlayerId === p.id && <tr><td colSpan={5} className="px-4 py-4"><PlayerAccountDetails playerId={p.id} /></td></tr>}
+                        </React.Fragment>
                       ))}
                   </tbody>
                 </table>
               </div>
             </div>
-          </div>
-        )}
-
-        {/* 9. TAB: ANNOUNCEMENTS */}
-        {activeTab === 'announcements' && (
-          <div className="max-w-2xl bg-surface-100 border border-surface-border rounded-3xl p-6 space-y-4">
-            <h3 className="font-display font-bold text-white text-lg">Broadcast Player Hub Notice</h3>
-            <form onSubmit={handleBroadcastAnnouncement} className="space-y-4 font-mono text-xs">
-              <div>
-                <label className="block text-gray-400 uppercase mb-1">Headline</label>
-                <input
-                  type="text"
-                  value={annTitle}
-                  onChange={(e) => setAnnTitle(e.target.value)}
-                  placeholder="e.g. Schedule Update or Room Credentials Announcement"
-                  required
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-surface-200 border border-surface-border text-white"
-                />
-              </div>
-              <div>
-                <label className="block text-gray-400 uppercase mb-1">Notice Content</label>
-                <textarea
-                  value={annContent}
-                  onChange={(e) => setAnnContent(e.target.value)}
-                  rows={4}
-                  required
-                  placeholder="Enter details..."
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-surface-200 border border-surface-border text-white"
-                />
-              </div>
-              <div className="flex justify-end">
-                <button
-                  type="submit"
-                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-brand-600 to-cyanAccent-600 text-white font-bold uppercase tracking-wider"
-                >
-                  Broadcast Notice
-                </button>
-              </div>
-            </form>
           </div>
         )}
 
@@ -1220,12 +1903,12 @@ export default function SecureAdminPortalPage() {
       {releaseRoomModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
           <div className="bg-surface-100 border border-surface-border rounded-3xl p-6 max-w-md w-full space-y-4">
-            <h3 className="font-display font-bold text-white text-base">Release BGMI Custom Room Credentials</h3>
+            <h3 className="font-display font-bold text-white text-base">Release {releaseRoomModal.game} Custom Room Credentials</h3>
             <p className="text-xs text-gray-400 font-mono">
               These credentials will immediately unlock on confirmed player dashboards for {releaseRoomModal.title}.
             </p>
             <div>
-              <label className="block text-xs font-mono uppercase text-gray-400 mb-1">BGMI Room ID</label>
+              <label className="block text-xs font-mono uppercase text-gray-400 mb-1">{releaseRoomModal.game} Room ID</label>
               <input
                 type="text"
                 value={customRoomId}
@@ -1244,9 +1927,10 @@ export default function SecureAdminPortalPage() {
                 className="w-full px-3 py-2.5 rounded-xl bg-surface-200 border border-surface-border text-white font-mono text-sm"
               />
             </div>
+            {adminError && <div role="alert" className="rounded-xl border border-rose-500/30 bg-rose-950/30 px-4 py-3 text-xs text-rose-200">{adminError}</div>}
             <div className="flex justify-end gap-2 pt-2">
               <button
-                onClick={() => setReleaseRoomModal(null)}
+                onClick={() => { setReleaseRoomModal(null); setAdminError(null); }}
                 className="px-4 py-2 rounded-lg bg-surface-200 text-xs font-mono text-gray-300"
               >
                 Cancel
@@ -1262,11 +1946,38 @@ export default function SecureAdminPortalPage() {
         </div>
       )}
 
+      {releaseMatchModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <div className="bg-surface-100 border border-surface-border rounded-3xl p-6 max-w-md w-full space-y-4">
+            <div>
+              <h3 className="font-display font-bold text-white text-lg">Set lobby room details</h3>
+              <p className="text-xs text-gray-400 mt-1">{releaseMatchModal.round_label} · {tournaments.find((tournament) => tournament.id === releaseMatchModal.tournament_id)?.game}</p>
+            </div>
+            <div>
+              <label className="block text-xs font-mono uppercase text-gray-400 mb-1">Room ID</label>
+              <input value={matchRoomId} onChange={(e) => setMatchRoomId(e.target.value)} required className="w-full px-3 py-2.5 rounded-xl bg-surface-200 border border-surface-border text-white font-mono text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs font-mono uppercase text-gray-400 mb-1">Room password</label>
+              <input value={matchRoomPass} onChange={(e) => setMatchRoomPass(e.target.value)} required className="w-full px-3 py-2.5 rounded-xl bg-surface-200 border border-surface-border text-white font-mono text-sm" />
+            </div>
+            {adminError && <div role="alert" className="rounded-xl border border-rose-500/30 bg-rose-950/30 px-4 py-3 text-xs text-rose-200">{adminError}</div>}
+            <div className="flex justify-end gap-2">
+              <button onClick={() => { setReleaseMatchModal(null); setAdminError(null); }} className="px-4 py-2 rounded-lg bg-surface-200 text-xs text-gray-300">Cancel</button>
+              <button onClick={handleSaveMatchRoomCredentials} className="px-4 py-2 rounded-lg bg-cyanAccent-600 text-white font-bold text-xs">Save & release to confirmed players</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* MODAL: Custom Match Builder on Organizer Terms */}
       {customMatchModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
           <div className="bg-surface-100 border border-surface-border rounded-3xl p-6 max-w-lg w-full space-y-4 max-h-[90vh] overflow-y-auto">
-            <h3 className="font-display font-bold text-white text-lg">Build Custom Lobby / Round</h3>
+            <div>
+              <h3 className="font-display font-bold text-white text-lg">Add Battle Royale lobby</h3>
+              <p className="text-xs text-gray-400 mt-1">All confirmed entries for this event will be placed into this lobby.</p>
+            </div>
             <form onSubmit={handleCreateCustomMatch} className="space-y-4 font-mono text-xs">
               <div>
                 <label className="block text-gray-400 uppercase mb-1">Round / Lobby Title</label>
@@ -1282,30 +1993,34 @@ export default function SecureAdminPortalPage() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-gray-400 uppercase mb-1">Map Selection</label>
+                  <label className="block text-gray-400 uppercase mb-1">{currentTourney?.game || 'Tournament'} Map</label>
                   <select
                     value={cmMap}
                     onChange={(e) => setCmMap(e.target.value)}
                     className="w-full px-3 py-2 rounded-xl bg-surface-200 border border-surface-border text-white"
                   >
-                    <option value="Erangel">Erangel (Classic)</option>
-                    <option value="Miramar">Miramar (Desert)</option>
-                    <option value="Sanhok">Sanhok (Jungle)</option>
-                    <option value="Vikendi">Vikendi (Snow)</option>
-                    <option value="Warehouse TDM">Warehouse TDM</option>
+                    {currentTourney?.game === 'Free Fire' ? (
+                      <>
+                        <option value="Bermuda">Bermuda</option>
+                        <option value="Alpine">Alpine</option>
+                        <option value="Purgatory">Purgatory</option>
+                        <option value="Kalahari">Kalahari</option>
+                      </>
+                    ) : (
+                      <>
+                        <option value="Erangel">Erangel</option>
+                        <option value="Miramar">Miramar</option>
+                        <option value="Sanhok">Sanhok</option>
+                        <option value="Vikendi">Vikendi</option>
+                        <option value="Warehouse TDM">Warehouse TDM</option>
+                      </>
+                    )}
                   </select>
                 </div>
 
                 <div>
-                  <label className="block text-gray-400 uppercase mb-1">Format</label>
-                  <select
-                    value={cmFormat}
-                    onChange={(e) => setCmFormat(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl bg-surface-200 border border-surface-border text-white"
-                  >
-                    <option value="Battle Royale">Battle Royale</option>
-                    <option value="Single Elimination">Single Elimination (1v1/TDM)</option>
-                  </select>
+                  <label className="block text-gray-400 uppercase mb-1">Lobby start time (IST)</label>
+                  <input type="datetime-local" value={cmTime} onChange={(e) => setCmTime(e.target.value)} required className="w-full px-3 py-2 rounded-xl bg-surface-200 border border-surface-border text-white" />
                 </div>
               </div>
 
@@ -1333,13 +2048,15 @@ export default function SecureAdminPortalPage() {
               </div>
 
               <div className="p-3 rounded-xl bg-surface-200 text-gray-400 text-[11px]">
-                Will automatically assign all {tourneyConfirmedRegs.length} confirmed squads to numbered lobby slots.
+                This lobby will include all {tourneyConfirmedRegs.length} confirmed teams / players. Add its actual room ID and password here, or set them later from the match card.
               </div>
+
+              {adminError && <div role="alert" className="rounded-xl border border-rose-500/30 bg-rose-950/30 px-4 py-3 text-xs text-rose-200">{adminError}</div>}
 
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => setCustomMatchModal(false)}
+                  onClick={() => { setCustomMatchModal(false); setAdminError(null); }}
                   className="px-4 py-2 rounded-lg bg-surface-200 text-gray-300"
                 >
                   Cancel
@@ -1348,7 +2065,7 @@ export default function SecureAdminPortalPage() {
                   type="submit"
                   className="px-4 py-2 rounded-lg bg-gradient-to-r from-brand-600 to-cyanAccent-600 text-white font-bold uppercase"
                 >
-                  Create & Schedule Match
+                  Create lobby
                 </button>
               </div>
             </form>
@@ -1360,9 +2077,10 @@ export default function SecureAdminPortalPage() {
       {scoreMatchModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
           <div className="bg-surface-100 border border-surface-border rounded-3xl p-6 max-w-xl w-full space-y-4 max-h-[85vh] overflow-y-auto">
-            <h3 className="font-display font-bold text-white text-base">
-              Score Match: {scoreMatchModal.round_label}
-            </h3>
+            <div>
+              <h3 className="font-display font-bold text-white text-base">Enter match results</h3>
+              <p className="mt-1 text-xs text-gray-400">{scoreTournament?.title} · {scoreMatchModal.round_label} · {scoreGame}</p>
+            </div>
             <div className="space-y-3 font-mono text-xs">
               {matchScores.map((score, idx) => {
                 const reg = registrations.find(r => r.id === score.registrationId);
@@ -1380,14 +2098,22 @@ export default function SecureAdminPortalPage() {
                             setMatchScores(copy);
                           }}
                         />
-                        <span>Winner (WWCD)</span>
+                        <span>Winner ({winnerTerm})</span>
                       </label>
                     </div>
+                    <p className="text-[10px] text-gray-400">
+                      {scoreGame === 'Free Fire' ? 'Booyah! marks the winning player or squad.' : 'WWCD means “Winner Winner Chicken Dinner.” Check this for the winning player or squad.'}
+                    </p>
+                    <p className="text-[10px] leading-relaxed text-gray-400">
+                      Finish position and kills affect Battle Royale and round-robin ratings. Tournament points come from your event score sheet. For elimination events, the selected winner advances. Choose exactly one winner for every match.
+                    </p>
                     <div className="grid grid-cols-3 gap-2">
                       <div>
-                        <span className="text-[10px] text-gray-400">Placement:</span>
+                        <span className="text-[10px] text-gray-400">Finish position:</span>
                         <input
                           type="number"
+                          min="1"
+                          step="1"
                           value={score.placement || 1}
                           onChange={(e) => {
                             const copy = [...matchScores];
@@ -1398,9 +2124,11 @@ export default function SecureAdminPortalPage() {
                         />
                       </div>
                       <div>
-                        <span className="text-[10px] text-gray-400">Kills:</span>
+                        <span className="text-[10px] text-gray-400">{reg?.tournament?.team_size === 1 ? 'Player kills:' : 'Squad kills:'}</span>
                         <input
                           type="number"
+                          min="0"
+                          step="1"
                           value={score.kills}
                           onChange={(e) => {
                             const copy = [...matchScores];
@@ -1411,9 +2139,11 @@ export default function SecureAdminPortalPage() {
                         />
                       </div>
                       <div>
-                        <span className="text-[10px] text-gray-400">Points:</span>
+                        <span className="text-[10px] text-gray-400">Tournament points:</span>
                         <input
                           type="number"
+                          min="0"
+                          step="1"
                           value={score.points}
                           onChange={(e) => {
                             const copy = [...matchScores];
@@ -1424,10 +2154,30 @@ export default function SecureAdminPortalPage() {
                         />
                       </div>
                     </div>
+                    {(reg?.tournament?.team_size || 1) > 1 && (reg?.members?.length || 0) > 0 && (
+                      <details className="rounded-lg border border-surface-border bg-surface-100/70 p-2.5">
+                        <summary className="cursor-pointer text-[10px] font-bold text-cyanAccent-300">Record individual kills (optional)</summary>
+                        <p className="mt-1.5 text-[10px] text-gray-400">If entered, all squad member kills must add up to the squad total. Linked VYROX player profiles receive their own kill totals and kill based rating points.</p>
+                        <div className="mt-2 grid grid-cols-2 gap-2">
+                          {reg?.members?.map((member) => (
+                            <label key={member.uid} className="text-[10px] text-gray-400">
+                              <span className="block truncate">{member.ign}</span>
+                              <input type="number" min="0" step="1" value={score.memberKills?.[member.uid] ?? ''} placeholder="Kills"
+                                onChange={(event) => {
+                                  const copy = [...matchScores];
+                                  copy[idx].memberKills = { ...(copy[idx].memberKills || {}), [member.uid]: event.target.value };
+                                  setMatchScores(copy);
+                                }} className="mt-1 w-full px-2 py-1 rounded bg-surface-200 border border-surface-border text-white text-xs" />
+                            </label>
+                          ))}
+                        </div>
+                      </details>
+                    )}
                   </div>
                 );
               })}
             </div>
+            {adminError && <div role="alert" className="rounded-xl border border-rose-500/30 bg-rose-950/30 px-4 py-3 text-xs text-rose-200">{adminError}</div>}
             <div className="flex justify-end gap-2 pt-2">
               <button
                 onClick={() => setScoreMatchModal(null)}
@@ -1436,10 +2186,11 @@ export default function SecureAdminPortalPage() {
                 Cancel
               </button>
               <button
+                disabled={isFinalizingMatch}
                 onClick={handleFinalizeResults}
-                className="px-4 py-2 rounded-lg bg-emerald-600 text-white font-bold text-xs uppercase"
+                className="px-4 py-2 rounded-lg bg-emerald-600 text-white font-bold text-xs uppercase disabled:opacity-50"
               >
-                Finalize & Update Ratings
+                {isFinalizingMatch ? 'Finalizing…' : 'Finalize score & update ratings'}
               </button>
             </div>
           </div>
@@ -1482,112 +2233,174 @@ export default function SecureAdminPortalPage() {
       {/* MODAL: Create Tournament on Organizer Terms */}
       {createTournamentOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <div className="bg-surface-100 border border-surface-border rounded-3xl p-6 max-w-lg w-full space-y-4 max-h-[90vh] overflow-y-auto">
-            <h3 className="font-display font-bold text-white text-lg">Build Tournament On Your Terms</h3>
+          <div className="bg-surface-100 border border-surface-border rounded-3xl p-6 md:p-8 max-w-3xl w-full space-y-5 max-h-[90vh] overflow-y-auto">
+            <div>
+              <h3 className="font-display font-bold text-white text-xl">{editingTournament ? 'Edit tournament' : 'Create tournament'}</h3>
+              <p className="text-sm text-gray-400 mt-1">Set the schedule and payout plan. A unique event banner is generated automatically.</p>
+            </div>
             <form onSubmit={handleCreateTournament} className="space-y-4 font-mono text-xs">
-              <div>
-                <label className="block text-gray-400 uppercase mb-1">Tournament Title</label>
-                <input
-                  type="text"
-                  value={newTitle}
-                  onChange={(e) => {
-                    setNewTitle(e.target.value);
-                    setNewSlug(e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, '-'));
-                  }}
-                  required
-                  placeholder="e.g. BGMI Pro Squad League Season 1"
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-surface-200 border border-surface-border text-white"
-                />
+              <div className="grid grid-cols-1 md:grid-cols-[1.4fr_1fr] gap-4">
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-gray-400 uppercase mb-1">Tournament Title</label>
+                    <input
+                      type="text"
+                      value={newTitle}
+                      onChange={(e) => {
+                        setNewTitle(e.target.value);
+                        if (!editingTournament) setNewSlug(e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''));
+                      }}
+                      required
+                      placeholder={`e.g. ${newGame} Pro Squad League Season 1`}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-surface-200 border border-surface-border text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-gray-400 uppercase mb-1">Event URL name</label>
+                    <input
+                      type="text"
+                      value={newSlug}
+                      onChange={(e) => setNewSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-|-$/g, ''))}
+                      required
+                      readOnly={Boolean(editingTournament)}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-surface-200 border border-surface-border text-white"
+                    />
+                    {editingTournament && <p className="text-[10px] text-gray-500 mt-1">The public URL stays the same so existing links keep working.</p>}
+                  </div>
+                </div>
+                <div className="relative h-28 md:h-full min-h-28 rounded-2xl overflow-hidden border border-surface-border bg-surface-200">
+                  <img src={getTournamentBanner(newGame, editingTournament?.slug || newSlug || newTitle || newGame, newTitle || `${newGame} Arena`)} alt={`${newGame} tournament banner preview`} className="w-full h-full object-cover" />
+                  <div className="absolute inset-0 bg-gradient-to-r from-black/70 to-transparent flex flex-col justify-end p-3">
+                    <span className="text-[10px] uppercase text-cyanAccent-300">Automatic event banner</span>
+                    <strong className="text-white text-sm">{newGame} Arena</strong>
+                  </div>
+                </div>
               </div>
 
-              <div>
-                <label className="block text-gray-400 uppercase mb-1">Unique Slug</label>
-                <input
-                  type="text"
-                  value={newSlug}
-                  onChange={(e) => setNewSlug(e.target.value)}
-                  required
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-surface-200 border border-surface-border text-white"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-gray-400 uppercase mb-1">Game</label>
+                  <select
+                    value={newGame}
+                    onChange={(e) => {
+                      const game = e.target.value as GameTitle;
+                      setNewGame(game);
+                    }}
+                    disabled={editingHasEntries}
+                    className="w-full px-3 py-2 rounded-xl bg-surface-200 border border-surface-border text-white"
+                  >
+                    <option value="BGMI">BGMI</option>
+                    <option value="Free Fire">Free Fire</option>
+                  </select>
+                </div>
                 <div>
                   <label className="block text-gray-400 uppercase mb-1">Team Mode</label>
                   <select
                     value={newMode}
                     onChange={(e) => {
-                      const m = e.target.value as TournamentMode;
-                      setNewMode(m);
-                      setNewTeamSize(m === 'Squad' ? '4' : m === 'Duo' ? '2' : '1');
+                      const mode = e.target.value as TournamentMode;
+                      setNewMode(mode);
+                      setNewTeamSize(mode === 'Squad' ? '4' : mode === 'Duo' ? '2' : '1');
                     }}
+                    disabled={editingHasEntries}
                     className="w-full px-3 py-2 rounded-xl bg-surface-200 border border-surface-border text-white"
                   >
-                    <option value="Squad">Squad (4v4)</option>
+                    <option value="Squad">Squad (4 players)</option>
                     <option value="1v1">1v1 Arena</option>
                     <option value="Solo">Solo</option>
-                    <option value="Duo">Duo (2v2)</option>
+                    <option value="Duo">Duo (2 players)</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-gray-400 uppercase mb-1">Tournament Format</label>
+                  <label className="block text-gray-400 uppercase mb-1">Format</label>
                   <select
                     value={newFormat}
                     onChange={(e) => setNewFormat(e.target.value as TournamentFormat)}
+                    disabled={editingHasEntries}
                     className="w-full px-3 py-2 rounded-xl bg-surface-200 border border-surface-border text-white"
                   >
-                    <option value="Battle Royale">Battle Royale Custom Lobbies</option>
-                    <option value="Single Elimination">Single Elimination Knockout</option>
+                    <option value="Battle Royale">Battle Royale lobbies</option>
+                    <option value="Single Elimination">Single Elimination knockout</option>
                   </select>
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
+              {editingHasEntries && <p className="rounded-xl border border-amber-500/30 bg-amber-950/20 px-4 py-3 text-[11px] text-amber-200">Players are already registered. Game, team mode, format, team size, and entry fee are locked to protect existing entries and payments.</p>}
+
+              <section className="p-4 rounded-2xl bg-surface-200/60 border border-surface-border space-y-3">
                 <div>
-                  <label className="block text-gray-400 uppercase mb-1">Entry Fee (₹)</label>
-                  <input
-                    type="number"
-                    value={newEntryFeeInr}
-                    onChange={(e) => setNewEntryFeeInr(e.target.value)}
-                    required
-                    className="w-full px-3 py-2 rounded-xl bg-surface-200 border border-surface-border text-white"
-                  />
+                  <h4 className="text-white font-bold">Registration & event schedule</h4>
+                  <p className="text-[11px] text-gray-400 mt-1">Choose dates in Indian Standard Time (IST).</p>
                 </div>
-                <div>
-                  <label className="block text-gray-400 uppercase mb-1">Prize Pool (₹)</label>
-                  <input
-                    type="number"
-                    value={newPrizePoolInr}
-                    onChange={(e) => setNewPrizePoolInr(e.target.value)}
-                    required
-                    className="w-full px-3 py-2 rounded-xl bg-surface-200 border border-surface-border text-white"
-                  />
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-gray-400 uppercase mb-1">Registration opens</label>
+                    <input type="datetime-local" value={newRegistrationOpensAt} min={editingTournament ? undefined : toIstDateTimeInput(new Date())} onChange={(e) => setNewRegistrationOpensAt(e.target.value)} required className="w-full px-3 py-2 rounded-xl bg-surface-100 border border-surface-border text-white" />
+                  </div>
+                  <div>
+                    <label className="block text-gray-400 uppercase mb-1">Registration closes</label>
+                    <input type="datetime-local" value={newRegistrationClosesAt} min={editingTournament ? undefined : newRegistrationOpensAt || undefined} onChange={(e) => setNewRegistrationClosesAt(e.target.value)} required className="w-full px-3 py-2 rounded-xl bg-surface-100 border border-surface-border text-white" />
+                  </div>
+                  <div>
+                    <label className="block text-gray-400 uppercase mb-1">Tournament starts</label>
+                    <input type="datetime-local" value={newStartTime} min={editingTournament ? undefined : newRegistrationClosesAt || undefined} onChange={(e) => setNewStartTime(e.target.value)} required className="w-full px-3 py-2 rounded-xl bg-surface-100 border border-surface-border text-white" />
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-gray-400 uppercase mb-1">Max Teams / Slots</label>
-                  <input
-                    type="number"
-                    value={newMaxSlots}
-                    onChange={(e) => setNewMaxSlots(e.target.value)}
-                    required
-                    className="w-full px-3 py-2 rounded-xl bg-surface-200 border border-surface-border text-white"
-                  />
-                </div>
-              </div>
+              </section>
 
               <div>
-                <label className="block text-gray-400 uppercase mb-1">Map & Qualification Preference</label>
-                <input
-                  type="text"
-                  value={newMapPreference}
-                  onChange={(e) => setNewMapPreference(e.target.value)}
-                  placeholder="e.g. Erangel, Miramar • Top 8 teams advance to Grand Finals"
+                <label className="block text-gray-400 uppercase mb-1">Tournament description, maps & qualification notes</label>
+                <textarea
+                  value={newDescription}
+                  onChange={(e) => setNewDescription(e.target.value)}
+                  rows={3}
+                  placeholder="Example: Erangel and Miramar · Top 8 squads advance to the final. Placeholder text is only an example; it is not saved."
                   className="w-full px-3 py-2 rounded-xl bg-surface-200 border border-surface-border text-white"
                 />
               </div>
 
+              <section className="p-4 rounded-2xl bg-surface-200/60 border border-surface-border space-y-3">
+                <h4 className="text-white font-bold">Entry fee & prize plan</h4>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-gray-400 uppercase mb-1">Entry fee (₹)</label>
+                    <input type="number" min="0" step="0.01" value={newEntryFeeInr} onChange={(e) => setNewEntryFeeInr(e.target.value)} required disabled={editingHasEntries} className="w-full px-3 py-2 rounded-xl bg-surface-100 border border-surface-border text-white disabled:opacity-60" />
+                  </div>
+                  <div>
+                    <label className="block text-gray-400 uppercase mb-1">Total prize pool (₹)</label>
+                    <input type="number" min="0" step="0.01" value={newPrizePoolInr} onChange={(e) => setNewPrizePoolInr(e.target.value)} required className="w-full px-3 py-2 rounded-xl bg-surface-100 border border-surface-border text-white" />
+                  </div>
+                  <div>
+                    <label className="block text-gray-400 uppercase mb-1">Team / player slots</label>
+                    <input type="number" min={Math.max(1, editingTournament?.registered_count || 0)} step="1" value={newMaxSlots} onChange={(e) => setNewMaxSlots(e.target.value)} required className="w-full px-3 py-2 rounded-xl bg-surface-100 border border-surface-border text-white" />
+                  </div>
+                </div>
+                <div className="flex items-center justify-between gap-3 pt-1">
+                  <div>
+                    <h5 className="text-white font-semibold">Who gets the prize?</h5>
+                    <p className="text-[11px] text-gray-400">Payout amounts must add up to the total prize pool.</p>
+                  </div>
+                  <button type="button" onClick={() => setNewPrizeDistribution((items) => [...items, { place: placeOrdinal(items.length + 1), amount: '0' }])} className="px-3 py-2 rounded-lg bg-surface-100 border border-surface-border text-cyanAccent-400 font-bold">+ Add payout</button>
+                </div>
+                <div className="space-y-2">
+                  {newPrizeDistribution.map((item, index) => (
+                    <div key={`payout-${index}`} className="grid grid-cols-[1fr_1fr_auto] gap-2">
+                      <input aria-label={`Payout place ${index + 1}`} value={item.place} onChange={(e) => setNewPrizeDistribution((items) => items.map((payout, payoutIndex) => payoutIndex === index ? { ...payout, place: e.target.value } : payout))} placeholder="e.g. 1st Place" className="min-w-0 px-3 py-2 rounded-xl bg-surface-100 border border-surface-border text-white" />
+                      <input aria-label={`Payout amount ${index + 1}`} type="number" min="0" step="0.01" value={item.amount} onChange={(e) => setNewPrizeDistribution((items) => items.map((payout, payoutIndex) => payoutIndex === index ? { ...payout, amount: e.target.value } : payout))} placeholder="Amount in ₹" className="min-w-0 px-3 py-2 rounded-xl bg-surface-100 border border-surface-border text-white" />
+                      <button type="button" aria-label={`Remove payout ${index + 1}`} disabled={newPrizeDistribution.length <= 1} onClick={() => setNewPrizeDistribution((items) => items.filter((_, payoutIndex) => payoutIndex !== index))} className="px-3 rounded-xl bg-surface-100 border border-surface-border text-rose-300 disabled:opacity-40">Remove</button>
+                    </div>
+                  ))}
+                </div>
+                {(() => {
+                  const total = newPrizeDistribution.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+                  const target = Number(newPrizePoolInr) || 0;
+                  const matches = Math.round(total * 100) === Math.round(target * 100);
+                  return <div className={`text-[11px] ${matches ? 'text-emerald-300' : 'text-amber-300'}`}>Allocated: ₹{total.toLocaleString('en-IN')} of ₹{target.toLocaleString('en-IN')} {matches ? '· balanced' : '· adjust payouts before publishing'}</div>;
+                })()}
+              </section>
+
               <div>
-                <label className="block text-gray-400 uppercase mb-1">Rules & Anti-Cheat</label>
+                <label className="block text-gray-400 uppercase mb-1">Rules & anti-cheat</label>
                 <textarea
                   value={newRules}
                   onChange={(e) => setNewRules(e.target.value)}
@@ -1597,19 +2410,23 @@ export default function SecureAdminPortalPage() {
                 />
               </div>
 
+              {adminError && <div role="alert" className="rounded-xl border border-rose-500/30 bg-rose-950/30 px-4 py-3 text-xs text-rose-200">{adminError}</div>}
+
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => setCreateTournamentOpen(false)}
+                  disabled={isCreatingTournament}
+                  onClick={() => { setCreateTournamentOpen(false); setEditingTournament(null); setAdminError(null); }}
                   className="px-4 py-2 rounded-lg bg-surface-200 text-gray-300"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-lg bg-gradient-to-r from-brand-600 to-cyanAccent-600 text-white font-bold"
+                  disabled={isCreatingTournament}
+                  className="px-4 py-2 rounded-lg bg-gradient-to-r from-brand-600 to-cyanAccent-600 text-white font-bold disabled:opacity-50"
                 >
-                  Publish Tournament
+                  {isCreatingTournament ? 'Saving…' : editingTournament ? 'Save changes' : 'Publish Tournament'}
                 </button>
               </div>
             </form>

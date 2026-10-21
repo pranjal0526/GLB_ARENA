@@ -88,8 +88,54 @@ export function applyRatingEvent(params: {
 
   store.ratingEvents.push(event);
   profile.current_rating = newRating;
+  profile.highest_rating = Math.max(profile.highest_rating ?? 1000, newRating);
   profile.updated_at = new Date().toISOString();
   persistStore(store);
 
   return event;
+}
+
+export function rebuildLocalPlayerRankings() {
+  const store = getStore();
+  const activeTournaments = new Map(store.tournaments.map((tournament) => [tournament.id, tournament]));
+  for (const profile of store.profiles) {
+    let rating = 1000;
+    let peak = 1000;
+    const events = store.ratingEvents.filter((event) => event.player_id === profile.id)
+      .sort((a, b) => a.created_at.localeCompare(b.created_at));
+    for (const event of events) {
+      rating = Math.max(500, rating + event.rating_change);
+      peak = Math.max(peak, rating);
+    }
+    const playedTournamentIds = new Set<string>();
+    let wins = 0;
+    let kills = 0;
+    for (const match of store.matches.filter((row) => row.status === 'completed')) {
+      const tournament = activeTournaments.get(match.tournament_id);
+      if (!tournament || tournament.status === 'cancelled') continue;
+      for (const participant of match.participants || []) {
+        const registration = store.registrations.find((row) => row.id === participant.registration_id);
+        if (!registration) continue;
+        const matchingRosterMember = registration.members?.find((member) => member.player_id === profile.id ||
+          (tournament.game === 'BGMI' && member.uid === profile.bgmi_uid) ||
+          (tournament.game === 'Free Fire' && member.uid === profile.free_fire_uid));
+        const isMember = registration.captain_id === profile.id || Boolean(matchingRosterMember);
+        if (!isMember) continue;
+        playedTournamentIds.add(tournament.id);
+        if (participant.is_winner) wins += 1;
+        if (tournament.team_size === 1) kills += participant.kills || 0;
+        else if (matchingRosterMember) {
+          const memberKills = participant.stats?.member_kills as Record<string, number> | undefined;
+          kills += Number(memberKills?.[matchingRosterMember.uid] || 0);
+        }
+      }
+    }
+    profile.current_rating = rating;
+    profile.highest_rating = peak;
+    profile.total_tournaments = playedTournamentIds.size;
+    profile.total_wins = wins;
+    profile.total_kills = kills;
+    profile.updated_at = new Date().toISOString();
+  }
+  persistStore(store);
 }

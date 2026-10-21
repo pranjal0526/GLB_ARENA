@@ -4,19 +4,20 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
+import { Avatar } from '@/components/avatar';
 import { 
   Trophy, 
   Menu, 
   X, 
   Flame, 
   LogOut, 
-  Zap, 
-  User 
+  Zap,
+  Shield
 } from 'lucide-react';
 
 export function Navbar() {
   const pathname = usePathname();
-  const { currentUser, signOut } = useAuth();
+  const { currentUser, isAdmin, signOut } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const isActive = (path: string) => {
@@ -46,7 +47,7 @@ export function Navbar() {
               </div>
             </Link>
 
-            {/* Public Player Navigation Links */}
+            {/* Player or organizer navigation */}
             <div className="hidden md:flex items-center gap-1">
               <Link
                 href="/tournaments"
@@ -58,18 +59,32 @@ export function Navbar() {
               >
                 Tournaments
               </Link>
-              <Link
-                href="/leaderboard"
-                className={`px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-1.5 ${
-                  isActive('/leaderboard')
-                    ? 'text-brand-400 bg-surface-100 border border-surface-border'
-                    : 'text-gray-300 hover:text-white hover:bg-surface-50'
-                }`}
-              >
-                <Trophy className="w-4 h-4" />
-                Leaderboard
-              </Link>
-              {currentUser && (
+              {isAdmin ? (
+                <Link
+                  href="/admin"
+                  className={`px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-1.5 ${
+                    isActive('/admin')
+                      ? 'text-brand-400 bg-surface-100 border border-surface-border'
+                      : 'text-gray-300 hover:text-white hover:bg-surface-50'
+                  }`}
+                >
+                  <Shield className="w-4 h-4" />
+                  Admin Center
+                </Link>
+              ) : (
+                <Link
+                  href="/leaderboard"
+                  className={`px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-1.5 ${
+                    isActive('/leaderboard')
+                      ? 'text-brand-400 bg-surface-100 border border-surface-border'
+                      : 'text-gray-300 hover:text-white hover:bg-surface-50'
+                  }`}
+                >
+                  <Trophy className="w-4 h-4" />
+                  Leaderboard
+                </Link>
+              )}
+              {currentUser && !isAdmin && (
                 <Link
                   href="/dashboard"
                   className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
@@ -78,7 +93,7 @@ export function Navbar() {
                       : 'text-gray-300 hover:text-white hover:bg-surface-50'
                   }`}
                 >
-                  My Hub
+                  My Tournaments
                 </Link>
               )}
             </div>
@@ -92,17 +107,19 @@ export function Navbar() {
                   href="/profile"
                   className="flex items-center gap-2.5 px-3 py-1.5 rounded-lg bg-surface-100 border border-surface-border hover:border-brand-500/50 transition-all group"
                 >
-                  <div className="w-7 h-7 rounded-full bg-brand-900 border border-brand-500/40 flex items-center justify-center text-xs font-bold text-brand-300">
-                    {currentUser.display_name.charAt(0)}
-                  </div>
+                  <Avatar name={currentUser.display_name} avatarUrl={currentUser.avatar_url} className="w-7 h-7 text-xs" />
                   <div className="flex flex-col text-left">
                     <span className="text-xs font-semibold text-white group-hover:text-brand-300 transition-colors">
                       {currentUser.display_name}
                     </span>
-                    <span className="text-[10px] font-mono text-cyanAccent-400 flex items-center gap-1">
-                      <Zap className="w-2.5 h-2.5" />
-                      {currentUser.current_rating} PTS
-                    </span>
+                    {isAdmin ? (
+                      <span className="text-[10px] font-mono text-amber-300">TOURNAMENT ADMIN</span>
+                    ) : (
+                      <span className="text-[10px] font-mono text-cyanAccent-400 flex items-center gap-1">
+                        <Zap className="w-2.5 h-2.5" />
+                        {currentUser.current_rating} PTS
+                      </span>
+                    )}
                   </div>
                 </Link>
 
@@ -154,22 +171,32 @@ export function Navbar() {
           >
             Tournaments
           </Link>
-          <Link
-            href="/leaderboard"
-            onClick={() => setMobileMenuOpen(false)}
-            className="block px-3 py-2 rounded-md text-base font-medium text-gray-200 hover:bg-surface-50"
-          >
-            Leaderboard
-          </Link>
+          {isAdmin ? (
+            <Link
+              href="/admin"
+              onClick={() => setMobileMenuOpen(false)}
+              className="block px-3 py-2 rounded-md text-base font-medium text-gray-200 hover:bg-surface-50"
+            >
+              Admin Center
+            </Link>
+          ) : (
+            <Link
+              href="/leaderboard"
+              onClick={() => setMobileMenuOpen(false)}
+              className="block px-3 py-2 rounded-md text-base font-medium text-gray-200 hover:bg-surface-50"
+            >
+              Leaderboard
+            </Link>
+          )}
           {currentUser ? (
             <>
-              <Link
+              {!isAdmin && <Link
                 href="/dashboard"
                 onClick={() => setMobileMenuOpen(false)}
                 className="block px-3 py-2 rounded-md text-base font-medium text-gray-200 hover:bg-surface-50"
               >
-                My Hub
-              </Link>
+                My Tournaments
+              </Link>}
               <Link
                 href="/profile"
                 onClick={() => setMobileMenuOpen(false)}

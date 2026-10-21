@@ -3,11 +3,12 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth-context';
+import { Avatar } from '@/components/avatar';
 import { Registration, Match, Announcement, Tournament } from '@/lib/supabase/types';
 import { getUserRegistrations } from '@/lib/services/registration-service';
 import { getUserMatches, getMatchesByTournament } from '@/lib/services/fixture-service';
 import { getAnnouncements } from '@/lib/services/announcement-service';
-import { getStore } from '@/lib/services/store';
+import { getTournamentRoomCredentials } from '@/lib/services/tournament-service';
 import { StatusBadge } from '@/components/status-badge';
 import { UpiPaymentModal } from '@/components/upi-payment-modal';
 import { 
@@ -32,6 +33,9 @@ import {
   CheckCircle2
 } from 'lucide-react';
 
+const getBattleRoyaleLobbyDescription = (label: string) =>
+  label.replace(/^Match\s*\d+\s*[-:·]?\s*/i, '').replace(/^\((.*)\)$/, '$1').trim() || 'Battle Royale lobby';
+
 export default function PlayerDashboard() {
   const { currentUser } = useAuth();
   const [registrations, setRegistrations] = useState<Registration[]>([]);
@@ -45,9 +49,13 @@ export default function PlayerDashboard() {
     if (!currentUser) return;
     setIsLoading(true);
 
-    const store = getStore();
     const regs = await getUserRegistrations(currentUser.id);
-    setRegistrations(regs);
+    const regsWithRooms = await Promise.all(regs.map(async (registration) => {
+      if (registration.status !== 'confirmed' || !registration.tournament) return registration;
+      const credentials = await getTournamentRoomCredentials(registration.tournament_id);
+      return credentials ? { ...registration, tournament: { ...registration.tournament, ...credentials } } : registration;
+    }));
+    setRegistrations(regsWithRooms);
 
     // Get user-specific matches
     let userMatches = await getUserMatches(currentUser.id);
@@ -55,7 +63,7 @@ export default function PlayerDashboard() {
     // If user has confirmed tournament registrations, also pull matches for those tournaments!
     const confirmedTourneyIds = regs.filter(r => r.status === 'confirmed').map(r => r.tournament_id);
     for (const tId of confirmedTourneyIds) {
-      const tourneyMatches = store.matches.filter(m => m.tournament_id === tId);
+      const tourneyMatches = await getMatchesByTournament(tId);
       tourneyMatches.forEach(tm => {
         if (!userMatches.some(um => um.id === tm.id)) {
           userMatches.push(tm);
@@ -94,7 +102,7 @@ export default function PlayerDashboard() {
     return (
       <div className="max-w-4xl mx-auto px-4 py-20 text-center space-y-4">
         <h2 className="text-2xl font-display font-bold text-white">Sign In to Access Player Hub</h2>
-        <p className="text-gray-400 text-sm">Track your BGMI tournament registrations, payments, and custom room credentials.</p>
+        <p className="text-gray-400 text-sm">Track your BGMI and Free Fire tournament registrations, payments, and room credentials.</p>
         <Link
           href="/auth/signin"
           className="inline-block px-6 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold text-sm shadow-glow"
@@ -105,8 +113,23 @@ export default function PlayerDashboard() {
     );
   }
 
-  // Count confirmed registrations
-  const confirmedRegs = registrations.filter(r => r.status === 'confirmed');
+  const pastRegistrations = registrations.filter((registration) => registration.tournament?.status === 'completed' || registration.tournament?.status === 'cancelled');
+  const activeRegistrations = registrations.filter((registration) => registration.tournament?.status !== 'completed' && registration.tournament?.status !== 'cancelled');
+  const pastTournamentIds = new Set(pastRegistrations.map((registration) => registration.tournament_id));
+  const activeMatches = matches.filter((match) => !pastTournamentIds.has(match.tournament_id));
+  const confirmedRegs = activeRegistrations.filter(r => r.status === 'confirmed');
+  const battleRoyaleMatchesByTournament = new Map<string, Match[]>();
+  for (const match of activeMatches.filter((item) => item.format === 'Battle Royale')) {
+    const group = battleRoyaleMatchesByTournament.get(match.tournament_id) || [];
+    group.push(match);
+    battleRoyaleMatchesByTournament.set(match.tournament_id, group);
+  }
+  const battleRoyaleMatchNumbers = new Map<string, number>();
+  for (const tournamentMatches of battleRoyaleMatchesByTournament.values()) {
+    tournamentMatches
+      .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.scheduled_time.localeCompare(b.scheduled_time) || a.id.localeCompare(b.id))
+      .forEach((match, index) => battleRoyaleMatchNumbers.set(match.id, index + 1));
+  }
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-10">
@@ -116,11 +139,7 @@ export default function PlayerDashboard() {
 
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6 relative z-10">
           <div className="flex items-center gap-4">
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-brand-600 to-cyanAccent-500 p-0.5 flex items-center justify-center shadow-glow">
-              <div className="w-full h-full bg-surface-200 rounded-[14px] flex items-center justify-center font-display font-black text-2xl text-white">
-                {currentUser.display_name.charAt(0)}
-              </div>
-            </div>
+            <Avatar name={currentUser.display_name} avatarUrl={currentUser.avatar_url} className="w-16 h-16 rounded-2xl text-2xl shadow-glow" />
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-2xl font-display font-black text-white">
@@ -133,9 +152,9 @@ export default function PlayerDashboard() {
               <div className="flex flex-wrap items-center gap-3 text-xs font-mono text-gray-400 mt-1">
                 <span>@{currentUser.username}</span>
                 <span>•</span>
-                <span className="text-cyanAccent-400 font-semibold">BGMI IGN: {currentUser.bgmi_ign || 'Not set'}</span>
+                <span className="text-cyanAccent-400 font-semibold">BGMI: {currentUser.bgmi_ign || 'Not set'}</span>
                 <span>•</span>
-                <span className="text-gray-300">UID: {currentUser.bgmi_uid || 'Not set'}</span>
+                <span className="text-orange-300 font-semibold">Free Fire: {currentUser.free_fire_ign || 'Not set'}</span>
               </div>
             </div>
           </div>
@@ -223,7 +242,7 @@ export default function PlayerDashboard() {
                     <div className="space-y-3">
                       <div className="grid grid-cols-2 gap-3 font-mono">
                         <div className="p-3 rounded-2xl bg-surface-200 border border-surface-border space-y-1">
-                          <span className="text-[10px] uppercase text-gray-400 font-bold">BGMI ROOM ID</span>
+                          <span className="text-[10px] uppercase text-gray-400 font-bold">{tourney?.game} ROOM ID</span>
                           <div className="flex items-center justify-between">
                             <span className="font-mono font-black text-white text-base select-all">
                               {tourney?.room_id}
@@ -296,18 +315,20 @@ export default function PlayerDashboard() {
             <Trophy className="w-5 h-5 text-amber-400" />
             <span>My Registered Tournaments</span>
           </h2>
-          <Link
-            href="/tournaments"
-            className="text-xs font-mono text-cyanAccent-400 hover:underline flex items-center gap-1"
-          >
-            <span>Browse More Competitions</span>
-            <ChevronRight className="w-3.5 h-3.5" />
-          </Link>
+          <div className="flex flex-wrap items-center gap-4">
+            <Link href="/dashboard/archive" className="text-xs font-mono text-gray-300 hover:text-white">
+              Past events ({pastRegistrations.length})
+            </Link>
+            <Link href="/tournaments" className="text-xs font-mono text-cyanAccent-400 hover:underline flex items-center gap-1">
+              <span>Browse More Competitions</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </Link>
+          </div>
         </div>
 
-        {registrations.length > 0 ? (
+        {activeRegistrations.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {registrations.map((reg) => {
+            {activeRegistrations.map((reg) => {
               const isFree = reg.tournament?.entry_fee_paise === 0;
               const feeInr = (reg.tournament?.entry_fee_paise || 0) / 100;
 
@@ -353,8 +374,9 @@ export default function PlayerDashboard() {
                     )}
 
                     {reg.status === 'payment_submitted' && (
-                      <div className="px-3 py-1.5 rounded-lg bg-violet-950/50 border border-violet-500/30 text-xs font-mono text-violet-300 font-medium">
-                        Verification in Progress
+                      <div className="px-3 py-1.5 rounded-lg bg-violet-950/50 border border-violet-500/30 text-xs font-mono text-violet-300 font-medium text-right">
+                        <div>Payment verification in progress</div>
+                        <div className="mt-1 text-[10px] text-gray-400">Your entry will be confirmed once payment is verified.</div>
                       </div>
                     )}
 
@@ -386,7 +408,7 @@ export default function PlayerDashboard() {
             <Swords className="w-10 h-10 text-gray-600 mx-auto" />
             <h4 className="text-sm font-semibold text-white">No Active Registrations</h4>
             <p className="text-xs max-w-sm mx-auto">
-              You haven&apos;t entered any BGMI tournaments yet. Browse the tournament directory to register your squad.
+              You haven&apos;t entered any tournaments yet. Browse BGMI and Free Fire events to join a competition.
             </p>
             <Link
               href="/tournaments"
@@ -405,16 +427,23 @@ export default function PlayerDashboard() {
           <span>Scheduled Match Fixtures</span>
         </h2>
 
-        {matches.length > 0 ? (
+        {activeMatches.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {matches.map((m) => {
+            {activeMatches.map((m) => {
               const isMatchRoomUnlocked = m.room_released || confirmedRegs.some(r => r.tournament_id === m.tournament_id);
 
               return (
                 <div key={m.id} className="p-6 rounded-3xl bg-surface-100 border border-surface-border space-y-4">
                   <div className="flex items-center justify-between border-b border-surface-border pb-3">
                     <div>
-                      <span className="text-xs font-mono text-cyanAccent-400 font-bold uppercase">{m.round_label}</span>
+                      {m.format === 'Battle Royale' ? (
+                        <>
+                          <span className="text-xs font-mono text-cyanAccent-400 font-bold uppercase">Match {battleRoyaleMatchNumbers.get(m.id)} · Battle Royale</span>
+                          <div className="text-sm font-semibold text-white mt-1">{getBattleRoyaleLobbyDescription(m.round_label)}</div>
+                        </>
+                      ) : (
+                        <span className="text-xs font-mono text-cyanAccent-400 font-bold uppercase">Round {m.round_number} · Match {m.match_number} · {m.round_label}</span>
+                      )}
                       <div className="text-[11px] font-mono text-gray-400 mt-0.5">
                         {new Date(m.scheduled_time).toLocaleDateString('en-IN', {
                           timeZone: 'Asia/Kolkata',
@@ -475,8 +504,9 @@ export default function PlayerDashboard() {
           isOpen={Boolean(selectedPayReg)}
           onClose={() => setSelectedPayReg(null)}
           onPaymentSubmitted={() => {
-            setSelectedPayReg(null);
-            loadData();
+            setRegistrations((current) => current.map((registration) => registration.id === selectedPayReg.id
+              ? { ...registration, status: 'payment_submitted' }
+              : registration));
           }}
         />
       )}

@@ -16,6 +16,9 @@ export function StatusBadge({ status, size = 'md' }: StatusBadgeProps) {
     case 'open':
       colorClasses = 'bg-emerald-950/60 text-emerald-400 border-emerald-500/40 shadow-sm';
       break;
+    case 'registration_upcoming':
+      colorClasses = 'bg-cyan-950/60 text-cyan-300 border-cyan-500/40';
+      break;
     case 'live':
       colorClasses = 'bg-rose-950/70 text-rose-400 border-rose-500/50 animate-pulse';
       break;

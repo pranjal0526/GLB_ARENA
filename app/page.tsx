@@ -2,8 +2,10 @@ import React from 'react';
 import Link from 'next/link';
 import { getTournaments } from '@/lib/services/tournament-service';
 import { getLeaderboard } from '@/lib/services/profile-service';
-import { getStore } from '@/lib/services/store';
+import { isSupabaseConfigured } from '@/lib/services/store';
 import { TournamentCard } from '@/components/tournament-card';
+import { Avatar } from '@/components/avatar';
+import { getUnlockedBadges } from '@/lib/services/badge-service';
 import { 
   Trophy, 
   Flame, 
@@ -19,22 +21,30 @@ import {
   QrCode
 } from 'lucide-react';
 
+export const dynamic = 'force-dynamic';
+
 export default async function HomePage() {
-  const store = getStore();
-  const allTournaments = await getTournaments();
-  const topPlayers = (await getLeaderboard()).slice(0, 5);
+  const [allTournaments, leaderboard] = await Promise.all([getTournaments(), getLeaderboard()]);
+  const topPlayers = leaderboard.slice(0, 5);
 
   // Platform statistics derived from actual records
-  const totalTournamentsCount = store.tournaments.length;
-  const activeRegistrationsCount = store.registrations.length;
-  const totalPrizeDistributed = store.tournaments.reduce((acc, t) => acc + (t.prize_pool_paise / 100), 0);
-  const activePlayersCount = store.profiles.length;
+  const totalTournamentsCount = allTournaments.length;
+  const activeRegistrationsCount = allTournaments.reduce((sum, tournament) => sum + (tournament.registered_count || 0), 0);
+  const totalPrizeDistributed = allTournaments.reduce((acc, t) => acc + (t.prize_pool_paise / 100), 0);
+  const activePlayersCount = leaderboard.length;
 
   const featuredTournaments = allTournaments.filter(t => t.status === 'open' || t.status === 'live').slice(0, 3);
   const upcomingTournaments = allTournaments.filter(t => t.status === 'open').slice(0, 3);
 
   return (
     <div className="space-y-24 pb-16">
+      {!isSupabaseConfigured() && (
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-5">
+          <div className="rounded-xl border border-amber-500/30 bg-amber-950/30 px-4 py-3 text-sm text-amber-200">
+            Preview data is showing. Connect a Supabase project using the setup guide in README.md to enable player accounts and live tournament data.
+          </div>
+        </div>
+      )}
       {/* 1. HERO SECTION */}
       <section className="relative pt-16 pb-20 md:pt-28 md:pb-32 overflow-hidden bg-cyber-grid">
         {/* Ambient Gradient Glows */}
@@ -45,14 +55,14 @@ export default async function HomePage() {
           {/* Eyebrow badge */}
           <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-surface-100 border border-brand-500/30 text-xs font-mono text-cyanAccent-400 mb-8 shadow-glow-sm">
             <span className="w-2 h-2 rounded-full bg-cyanAccent-400 animate-ping" />
-            <span>INDIA&apos;S PREMIER BGMI TOURNAMENT ARENA</span>
+            <span>INDIA&apos;S ARENA FOR BGMI &amp; FREE FIRE TOURNAMENTS</span>
           </div>
 
           {/* Headline */}
           <h1 className="text-4xl sm:text-6xl md:text-7xl font-display font-black tracking-tight text-white uppercase max-w-5xl mx-auto leading-none">
             Forge Your Legacy in the{' '}
             <span className="bg-gradient-to-r from-brand-400 via-purple-300 to-cyanAccent-400 bg-clip-text text-transparent">
-              BGMI Arena
+              BGMI &amp; Free Fire Arena
             </span>
           </h1>
 
@@ -195,7 +205,7 @@ export default async function HomePage() {
             </div>
             <h3 className="font-display font-bold text-white text-base mb-2">Create Profile</h3>
             <p className="text-xs text-gray-400 leading-relaxed">
-              Sign up, link your BGMI In-Game Name and Character UID. Start with an initial rating of 1000 PTS.
+              Create a player account, add your BGMI or Free Fire player ID, and join an open tournament.
             </p>
           </div>
 
@@ -258,7 +268,7 @@ export default async function HomePage() {
                 <tr>
                   <th className="py-3.5 px-4 text-center w-16">Rank</th>
                   <th className="py-3.5 px-4">Player</th>
-                  <th className="py-3.5 px-4">BGMI IGN & UID</th>
+                  <th className="py-3.5 px-4">Game Identities</th>
                   <th className="py-3.5 px-4 text-center">Wins</th>
                   <th className="py-3.5 px-4 text-center">Kills</th>
                   <th className="py-3.5 px-4 text-right">VYROX Rating</th>
@@ -282,18 +292,16 @@ export default async function HomePage() {
                     </td>
                     <td className="py-3.5 px-4">
                       <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-brand-900 border border-brand-500/30 flex items-center justify-center font-bold text-xs text-brand-300">
-                          {player.display_name.charAt(0)}
-                        </div>
+                        <Avatar name={player.display_name} avatarUrl={player.avatar_url} className="w-8 h-8 text-xs" />
                         <div>
                           <div className="font-semibold text-white">{player.display_name}</div>
-                          <div className="text-xs text-gray-400 font-mono">@{player.username}</div>
+                          <div className="text-xs text-gray-400 font-mono">@{player.username}{getUnlockedBadges(player.highest_rating ?? player.current_rating).at(-1) && <span className="ml-2 text-amber-300">{getUnlockedBadges(player.highest_rating ?? player.current_rating).at(-1)?.icon} {getUnlockedBadges(player.highest_rating ?? player.current_rating).at(-1)?.name}</span>}</div>
                         </div>
                       </div>
                     </td>
                     <td className="py-3.5 px-4 font-mono text-xs">
-                      <div className="text-cyanAccent-400 font-semibold">{player.bgmi_ign || 'N/A'}</div>
-                      <div className="text-gray-500 text-[11px]">UID: {player.bgmi_uid || 'N/A'}</div>
+                      <div className="text-cyanAccent-400 font-semibold">BGMI: {player.bgmi_ign || 'N/A'}</div>
+                      <div className="text-orange-300 text-[11px]">Free Fire: {player.free_fire_ign || 'N/A'}</div>
                     </td>
                     <td className="py-3.5 px-4 text-center font-mono font-bold text-white">
                       {player.total_wins}

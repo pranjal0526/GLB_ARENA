@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { Tournament } from '@/lib/supabase/types';
 import { StatusBadge } from './status-badge';
 import { Calendar, Users, Trophy, IndianRupee, ArrowRight, Gamepad2 } from 'lucide-react';
+import { getTournamentBanner, isLegacyTournamentBanner } from '@/lib/utils/tournament-banner';
 
 interface TournamentCardProps {
   tournament: Tournament;
@@ -23,16 +24,25 @@ export function TournamentCard({ tournament }: TournamentCardProps) {
   });
 
   const registered = tournament.registered_count || 0;
+  const bannerUrl = !tournament.banner_url || isLegacyTournamentBanner(tournament.banner_url)
+    ? getTournamentBanner(tournament.game, tournament.slug, tournament.title)
+    : tournament.banner_url;
   const maxSlots = tournament.max_slots;
   const percentFilled = Math.min(100, Math.round((registered / maxSlots) * 100));
+  const currentTime = Date.now();
+  const displayStatus = tournament.status === 'open' && currentTime < new Date(tournament.registration_opens_at).getTime()
+    ? 'registration_upcoming'
+    : tournament.status === 'open' && currentTime > new Date(tournament.registration_closes_at).getTime()
+      ? 'registration_closed'
+      : tournament.status;
 
   return (
     <div className="group relative rounded-2xl bg-surface-100 border border-surface-border overflow-hidden transition-all duration-300 hover:border-brand-500/50 hover:shadow-glow flex flex-col">
       {/* Top Banner / Image */}
       <div className="relative h-44 w-full overflow-hidden bg-surface-200">
-        {tournament.banner_url ? (
+        {bannerUrl ? (
           <img
-            src={tournament.banner_url}
+            src={bannerUrl}
             alt={tournament.title}
             className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
           />
@@ -45,7 +55,7 @@ export function TournamentCard({ tournament }: TournamentCardProps) {
         
         {/* Status Badge */}
         <div className="absolute top-3 right-3">
-          <StatusBadge status={tournament.status} size="sm" />
+          <StatusBadge status={displayStatus} size="sm" />
         </div>
 
         {/* Game & Mode Pill */}

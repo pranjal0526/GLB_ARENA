@@ -5,12 +5,13 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { Flame, Lock, Mail, AlertCircle, ArrowRight } from 'lucide-react';
+import { GitHubAuthButton } from '@/components/github-auth-button';
 
 export default function SignInPage() {
   const router = useRouter();
-  const { signIn, loginAs } = useAuth();
+  const { signIn } = useAuth();
 
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -21,9 +22,9 @@ export default function SignInPage() {
     setIsLoading(true);
 
     try {
-      const res = await signIn(email, password);
+      const res = await signIn(identifier, password);
       if (res.success) {
-        router.push('/dashboard');
+        router.push(res.isAdmin ? '/admin' : '/dashboard');
       } else {
         setError(res.error || 'Failed to sign in');
       }
@@ -71,10 +72,11 @@ export default function SignInPage() {
                 <Mail className="w-4 h-4 text-gray-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <input
                   type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  autoComplete="email"
+                  value={identifier}
+                  onChange={(e) => setIdentifier(e.target.value)}
                   required
-                  placeholder="player@vyrox.in"
+                  placeholder="player@email.com"
                   className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-surface-200 border border-surface-border text-white text-sm focus:border-brand-500 focus:outline-none"
                 />
               </div>
@@ -88,6 +90,7 @@ export default function SignInPage() {
                 <Lock className="w-4 h-4 text-gray-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <input
                   type="password"
+                  autoComplete="current-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
@@ -106,6 +109,11 @@ export default function SignInPage() {
               <ArrowRight className="w-4 h-4" />
             </button>
           </form>
+
+          <div className="flex items-center gap-3 text-[10px] text-gray-500 font-mono uppercase">
+            <span className="h-px bg-surface-border flex-1" />or continue with<span className="h-px bg-surface-border flex-1" />
+          </div>
+          <GitHubAuthButton />
 
           <div className="pt-2 text-center text-xs font-mono text-gray-400">
             Don&apos;t have an account?{' '}

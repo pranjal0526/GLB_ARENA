@@ -4,7 +4,8 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
-import { Flame, Lock, Mail, User, Gamepad2, AlertCircle, ArrowRight } from 'lucide-react';
+import { GitHubAuthButton } from '@/components/github-auth-button';
+import { Flame, Lock, AlertCircle, ArrowRight } from 'lucide-react';
 
 export default function SignUpPage() {
   const router = useRouter();
@@ -14,22 +15,41 @@ export default function SignUpPage() {
   const [password, setPassword] = useState('');
   const [username, setUsername] = useState('');
   const [displayName, setDisplayName] = useState('');
+  const [game, setGame] = useState<'BGMI' | 'Free Fire'>('BGMI');
   const [bgmiIgn, setBgmiIgn] = useState('');
   const [bgmiUid, setBgmiUid] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [emailConfirmationPending, setEmailConfirmationPending] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setNotice(null);
 
     if (!/^[a-zA-Z0-9_]+$/.test(username)) {
       setError('Username can only contain alphanumeric characters and underscores.');
       return;
     }
 
-    if (!/^\d+$/.test(bgmiUid)) {
-      setError('BGMI Character UID must contain digits only.');
+    if (username.trim().length < 3 || username.trim().length > 24) {
+      setError('Username must be between 3 and 24 characters.');
+      return;
+    }
+
+    if (password.length < 6) {
+      setError('Password must be at least 6 characters.');
+      return;
+    }
+
+    if (bgmiIgn.trim().length < 2 || displayName.trim().length < 2) {
+      setError('Enter a display name and an in-game name with at least 2 characters.');
+      return;
+    }
+
+    if (!/^\d{5,}$/.test(bgmiUid.trim())) {
+      setError(`${game} Player ID must contain at least 5 digits.`);
       return;
     }
 
@@ -37,14 +57,21 @@ export default function SignUpPage() {
     try {
       const res = await signUp({
         email,
+        password,
         username: username.trim(),
         displayName: displayName.trim(),
-        bgmiIgn: bgmiIgn.trim(),
-        bgmiUid: bgmiUid.trim(),
+        game,
+        ign: bgmiIgn.trim(),
+        uid: bgmiUid.trim(),
       });
 
       if (res.success) {
-        router.push('/dashboard');
+        if (res.emailConfirmationRequired) {
+          setEmailConfirmationPending(true);
+          setNotice('Account created. Confirm your email using the link we sent; it will sign you in and return you to your dashboard.');
+        } else {
+          router.push('/dashboard');
+        }
       } else {
         setError(res.error || 'Failed to create account.');
       }
@@ -70,6 +97,9 @@ export default function SignUpPage() {
           <p className="text-xs text-gray-400 font-mono">
             Join tournaments, record match results, and track your national ranking.
           </p>
+          <p className="text-[11px] text-gray-500">
+            Faded placeholder text is an example hint. Replace it with your own account and game details.
+          </p>
         </div>
 
         <div className="p-6 md:p-8 rounded-3xl bg-surface-100 border border-surface-border shadow-2xl space-y-5">
@@ -79,8 +109,23 @@ export default function SignUpPage() {
               <span>{error}</span>
             </div>
           )}
+          {notice && (
+            <div className="p-3 rounded-xl bg-emerald-950/50 border border-emerald-500/40 text-xs text-emerald-300">
+              {notice}
+            </div>
+          )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <GitHubAuthButton />
+          <div className="flex items-center gap-3 text-[10px] text-gray-500 font-mono uppercase">
+            <span className="h-px bg-surface-border flex-1" />or use email<span className="h-px bg-surface-border flex-1" />
+          </div>
+
+          {emailConfirmationPending ? (
+            <div className="text-center text-xs font-mono text-gray-400">
+              Confirm your email using the link we sent. It will sign you in and return you here. Or{' '}
+              <Link href="/auth/signin" className="text-cyanAccent-400 hover:underline font-bold">sign in</Link>.
+            </div>
+          ) : <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-mono uppercase text-gray-400 mb-1">
@@ -88,6 +133,7 @@ export default function SignUpPage() {
                 </label>
                 <input
                   type="text"
+                  autoComplete="username"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   required
@@ -118,12 +164,16 @@ export default function SignUpPage() {
                 </label>
                 <input
                   type="email"
+                  autoComplete="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
                   placeholder="player@gmail.com"
                   className="w-full px-3.5 py-2.5 rounded-xl bg-surface-200 border border-surface-border text-white text-sm focus:border-brand-500 focus:outline-none"
                 />
+                <p className="mt-1 text-[10px] text-gray-500">
+                  Email signup needs a confirmation link. GitHub signup avoids confirmation-email sending limits.
+                </p>
               </div>
 
               <div>
@@ -132,6 +182,8 @@ export default function SignUpPage() {
                 </label>
                 <input
                   type="password"
+                  autoComplete="new-password"
+                  minLength={6}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
@@ -141,36 +193,47 @@ export default function SignUpPage() {
               </div>
             </div>
 
-            {/* In-Game BGMI Details */}
+            {/* Primary game identity */}
             <div className="p-4 rounded-2xl bg-surface-200/50 border border-surface-border space-y-3">
               <div className="text-xs font-mono uppercase text-cyanAccent-400 font-bold">
-                BGMI Tournament Identity
+                Tournament Game Identity
               </div>
+              <label className="block text-xs font-mono uppercase text-gray-400">
+                Main game
+                <select
+                  value={game}
+                  onChange={(event) => setGame(event.target.value as 'BGMI' | 'Free Fire')}
+                  className="mt-1 w-full px-3 py-2 rounded-xl bg-surface-100 border border-surface-border text-white text-sm focus:border-cyanAccent-500 focus:outline-none"
+                >
+                  <option value="BGMI">BGMI</option>
+                  <option value="Free Fire">Free Fire</option>
+                </select>
+              </label>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-mono uppercase text-gray-400 mb-1">
-                    BGMI In-Game Name (IGN) <span className="text-rose-400">*</span>
+                    {game} In-Game Name (IGN) <span className="text-rose-400">*</span>
                   </label>
                   <input
                     type="text"
                     value={bgmiIgn}
                     onChange={(e) => setBgmiIgn(e.target.value)}
                     required
-                    placeholder="SOUL_Mortal"
+                    placeholder={game === 'BGMI' ? 'SOUL_Mortal' : 'FreeFire_Player'}
                     className="w-full px-3 py-2 rounded-xl bg-surface-100 border border-surface-border text-white text-sm focus:border-cyanAccent-500 focus:outline-none"
                   />
                 </div>
 
                 <div>
                   <label className="block text-xs font-mono uppercase text-gray-400 mb-1">
-                    BGMI Character UID <span className="text-rose-400">*</span>
+                    {game} Player ID <span className="text-rose-400">*</span>
                   </label>
                   <input
                     type="text"
                     value={bgmiUid}
                     onChange={(e) => setBgmiUid(e.target.value)}
                     required
-                    placeholder="5172635412"
+                    placeholder="Player ID"
                     className="w-full px-3 py-2 rounded-xl bg-surface-100 border border-surface-border text-white text-sm focus:border-cyanAccent-500 focus:outline-none font-mono"
                   />
                 </div>
@@ -185,7 +248,7 @@ export default function SignUpPage() {
               <span>{isLoading ? 'Creating Account...' : 'Complete Registration'}</span>
               <ArrowRight className="w-4 h-4" />
             </button>
-          </form>
+          </form>}
 
           <div className="pt-2 text-center text-xs font-mono text-gray-400">
             Already registered?{' '}

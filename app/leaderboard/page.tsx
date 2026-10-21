@@ -1,197 +1,196 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { Profile } from '@/lib/supabase/types';
-import { getLeaderboard } from '@/lib/services/profile-service';
-import { Trophy, Search, Zap, Flame, ShieldAlert, Award } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Search, Share2, Trophy, Users, Zap } from 'lucide-react';
+import { Avatar } from '@/components/avatar';
+import { Profile, Team } from '@/lib/supabase/types';
+import { getLeaderboard, getTeamLeaderboard } from '@/lib/services/profile-service';
+import { getNextBadge, getUnlockedBadges } from '@/lib/services/badge-service';
+import { createClient } from '@/lib/supabase/client';
+import { isSupabaseConfigured } from '@/lib/services/store';
+import { LeaderboardStoryData, LeaderboardShareDialog } from '@/components/leaderboard-share-dialog';
+import { buildLeaderboardShareUrl } from '@/lib/utils/share-links';
+
+type RankingType = 'players' | 'teams';
 
 export default function LeaderboardPage() {
   const [players, setPlayers] = useState<Profile[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [rankingType, setRankingType] = useState<RankingType>('players');
   const [search, setSearch] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [shareTarget, setShareTarget] = useState<{ kind: 'player' | 'team'; id: string } | null>(null);
+  const [storyData, setStoryData] = useState<LeaderboardStoryData | null>(null);
 
-  useEffect(() => {
-    async function load() {
-      setIsLoading(true);
-      const data = await getLeaderboard();
-      setPlayers(data);
+  const loadRankings = useCallback(async () => {
+    try {
+      const [playerRows, teamRows] = await Promise.all([getLeaderboard(), getTeamLeaderboard()]);
+      setPlayers(playerRows);
+      setTeams(teamRows);
+      setError('');
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : 'Could not load rankings.');
+    } finally {
       setIsLoading(false);
     }
-    load();
   }, []);
 
-  const filtered = players.filter(p => {
-    const q = search.toLowerCase();
-    return (
-      p.display_name.toLowerCase().includes(q) ||
-      p.username.toLowerCase().includes(q) ||
-      (p.bgmi_ign && p.bgmi_ign.toLowerCase().includes(q))
-    );
-  });
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('teamId')) {
+      setRankingType('teams');
+      setShareTarget({ kind: 'team', id: params.get('teamId') || '' });
+    } else if (params.has('team')) {
+      setRankingType('teams');
+      setSearch(params.get('team') || '');
+    } else if (params.has('player')) {
+      setSearch(params.get('player') || '');
+      setShareTarget({ kind: 'player', id: params.get('player') || '' });
+    }
+    void loadRankings();
+    const refresh = () => { if (document.visibilityState === 'visible') void loadRankings(); };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    window.addEventListener('vyrox_store_updated', refresh);
+    const supabase = isSupabaseConfigured() ? createClient() : null;
+    const channel = supabase?.channel('rankings-updates')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, refresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'teams' }, refresh)
+      .subscribe();
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+      window.removeEventListener('vyrox_store_updated', refresh);
+      if (channel && supabase) void supabase.removeChannel(channel);
+    };
+  }, [loadRankings]);
+
+  const filteredPlayers = useMemo(() => {
+    if (shareTarget?.kind === 'player') return players.filter((player) => player.username.toLowerCase() === shareTarget.id.toLowerCase());
+    const query = search.trim().toLowerCase();
+    if (!query) return players;
+    return players.filter((player) => [player.display_name, player.username, player.bgmi_ign, player.free_fire_ign]
+      .some((value) => value?.toLowerCase().includes(query)));
+  }, [players, search, shareTarget]);
+
+  const filteredTeams = useMemo(() => {
+    if (shareTarget?.kind === 'team') return teams.filter((team) => team.id === shareTarget.id);
+    const query = search.trim().toLowerCase();
+    if (!query) return teams;
+    return teams.filter((team) => `${team.name} ${team.game}`.toLowerCase().includes(query));
+  }, [teams, search, shareTarget]);
+
+  const sharePlayer = (player: Profile) => {
+    const peakRating = player.highest_rating ?? player.current_rating;
+    const badge = getUnlockedBadges(peakRating).at(-1);
+    const nextBadge = getNextBadge(peakRating);
+    setStoryData({
+      kind: 'player', name: player.display_name, handle: player.username,
+      rank: players.findIndex((row) => row.id === player.id) + 1,
+      rating: player.current_rating, peakRating: player.highest_rating ?? player.current_rating,
+      events: player.total_tournaments, wins: player.total_wins, kills: player.total_kills,
+      badgeName: badge?.name || nextBadge?.name, badgeIcon: badge?.icon || nextBadge?.icon,
+      badgeUnlocked: Boolean(badge), badgeThreshold: badge?.ratingRequired || nextBadge?.ratingRequired,
+      shareUrl: buildLeaderboardShareUrl({ player: player.username }),
+    });
+  };
+
+  const shareTeam = (team: Team) => {
+    const rank = teams.findIndex((row) => row.id === team.id) + 1;
+    const badge = getUnlockedBadges(team.highest_rating).at(-1);
+    const nextBadge = getNextBadge(team.highest_rating);
+    setStoryData({
+      kind: 'team', name: team.name, game: team.game, rank,
+      rating: team.current_rating, peakRating: team.highest_rating,
+      events: team.tournaments_played, wins: team.total_wins, kills: team.total_kills,
+      badgeName: badge?.name || nextBadge?.name, badgeIcon: badge?.icon || nextBadge?.icon,
+      badgeUnlocked: Boolean(badge), badgeThreshold: badge?.ratingRequired || nextBadge?.ratingRequired,
+      shareUrl: buildLeaderboardShareUrl({ teamId: team.id }),
+    });
+  };
+
+  const rows = rankingType === 'players' ? filteredPlayers : filteredTeams;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-8">
-      {/* Page Header */}
-      <div className="text-center max-w-3xl mx-auto space-y-3">
+      <header className="text-center max-w-3xl mx-auto space-y-3">
         <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-xs font-mono text-amber-400">
-          <Trophy className="w-3.5 h-3.5" />
-          <span>OFFICIAL COMPETITIVE RANKINGS</span>
+          <Trophy className="w-3.5 h-3.5" /> OFFICIAL COMPETITIVE RANKINGS
         </div>
-        <h1 className="text-3xl sm:text-5xl font-display font-black text-white uppercase tracking-tight">
-          National BGMI Leaderboard
-        </h1>
-        <p className="text-sm text-gray-400 leading-relaxed">
-          Persistent competitive player ratings calculated across verified Indian BGMI tournaments, 1v1 Arena clashes, and battle royale custom lobbies.
-        </p>
+        <h1 className="text-3xl sm:text-5xl font-display font-black text-white uppercase tracking-tight">BGMI &amp; Free Fire Leaderboards</h1>
+        <p className="text-sm text-gray-400 leading-relaxed">Individual player ratings and persistent team standings update when admins finalize match results.</p>
+      </header>
+
+      <div className="flex justify-center">
+        <div className="inline-flex gap-2 p-1.5 rounded-2xl bg-surface-100 border border-surface-border" role="tablist" aria-label="Leaderboard type">
+          <button type="button" role="tab" aria-selected={rankingType === 'players'} onClick={() => { setRankingType('players'); setSearch(''); setShareTarget(null); }}
+            className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-colors flex items-center gap-2 ${rankingType === 'players' ? 'bg-brand-600 text-white' : 'text-gray-400 hover:text-white'}`}>
+            <Zap className="w-4 h-4" /> Individual Players <span className="font-mono opacity-75">{players.length}</span>
+          </button>
+          <button type="button" role="tab" aria-selected={rankingType === 'teams'} onClick={() => { setRankingType('teams'); setSearch(''); setShareTarget(null); }}
+            className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-colors flex items-center gap-2 ${rankingType === 'teams' ? 'bg-brand-600 text-white' : 'text-gray-400 hover:text-white'}`}>
+            <Users className="w-4 h-4" /> Teams <span className="font-mono opacity-75">{teams.length}</span>
+          </button>
+        </div>
       </div>
 
-      {/* Top 3 Podium Cards */}
-      {players.length >= 3 && !search && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4">
-          {/* Rank 2 (Silver) */}
-          <div className="md:order-1 rounded-2xl bg-surface-100 border border-slate-500/30 p-6 flex flex-col items-center text-center relative overflow-hidden shadow-lg md:translate-y-4">
-            <div className="w-10 h-10 rounded-full bg-slate-400/20 text-slate-300 font-mono font-bold flex items-center justify-center text-sm mb-3 border border-slate-400/40">
-              #2
-            </div>
-            <div className="w-16 h-16 rounded-2xl bg-brand-900 border border-brand-500/30 flex items-center justify-center font-display font-black text-xl text-brand-300 mb-3">
-              {players[1].display_name.charAt(0)}
-            </div>
-            <h3 className="font-display font-bold text-white text-lg">{players[1].display_name}</h3>
-            <div className="text-xs font-mono text-cyanAccent-400 font-semibold mt-0.5">{players[1].bgmi_ign}</div>
-            <div className="text-2xl font-black font-mono text-slate-200 mt-4 flex items-center gap-1">
-              <Zap className="w-5 h-5 text-brand-400" />
-              {players[1].current_rating} PTS
-            </div>
-            <div className="mt-4 pt-4 border-t border-surface-border w-full flex justify-around text-xs font-mono text-gray-400">
-              <div>Wins: <strong className="text-white">{players[1].total_wins}</strong></div>
-              <div>Kills: <strong className="text-white">{players[1].total_kills}</strong></div>
-            </div>
-          </div>
-
-          {/* Rank 1 (Gold - Crown) */}
-          <div className="md:order-2 rounded-2xl bg-gradient-to-b from-amber-950/30 via-surface-100 to-surface-100 border border-amber-500/50 p-6 flex flex-col items-center text-center relative overflow-hidden shadow-glow">
-            <div className="w-10 h-10 rounded-full bg-amber-500/30 text-amber-300 font-mono font-black flex items-center justify-center text-sm mb-3 border border-amber-500/50 animate-bounce">
-              👑 #1
-            </div>
-            <div className="w-20 h-20 rounded-2xl bg-gradient-to-tr from-amber-600 to-amber-400 p-0.5 flex items-center justify-center mb-3 shadow-glow">
-              <div className="w-full h-full bg-surface-200 rounded-[14px] flex items-center justify-center font-display font-black text-2xl text-amber-300">
-                {players[0].display_name.charAt(0)}
-              </div>
-            </div>
-            <h3 className="font-display font-black text-white text-xl">{players[0].display_name}</h3>
-            <div className="text-xs font-mono text-cyanAccent-400 font-bold mt-0.5">{players[0].bgmi_ign}</div>
-            <div className="text-3xl font-black font-mono text-amber-300 mt-4 flex items-center gap-1">
-              <Zap className="w-6 h-6 text-amber-400" />
-              {players[0].current_rating} PTS
-            </div>
-            <div className="mt-4 pt-4 border-t border-surface-border w-full flex justify-around text-xs font-mono text-gray-400">
-              <div>Wins: <strong className="text-white">{players[0].total_wins}</strong></div>
-              <div>Kills: <strong className="text-white">{players[0].total_kills}</strong></div>
-            </div>
-          </div>
-
-          {/* Rank 3 (Bronze) */}
-          <div className="md:order-3 rounded-2xl bg-surface-100 border border-amber-800/30 p-6 flex flex-col items-center text-center relative overflow-hidden shadow-lg md:translate-y-6">
-            <div className="w-10 h-10 rounded-full bg-amber-800/20 text-amber-500 font-mono font-bold flex items-center justify-center text-sm mb-3 border border-amber-800/40">
-              #3
-            </div>
-            <div className="w-16 h-16 rounded-2xl bg-brand-900 border border-brand-500/30 flex items-center justify-center font-display font-black text-xl text-brand-300 mb-3">
-              {players[2].display_name.charAt(0)}
-            </div>
-            <h3 className="font-display font-bold text-white text-lg">{players[2].display_name}</h3>
-            <div className="text-xs font-mono text-cyanAccent-400 font-semibold mt-0.5">{players[2].bgmi_ign}</div>
-            <div className="text-2xl font-black font-mono text-amber-500 mt-4 flex items-center gap-1">
-              <Zap className="w-5 h-5 text-brand-400" />
-              {players[2].current_rating} PTS
-            </div>
-            <div className="mt-4 pt-4 border-t border-surface-border w-full flex justify-around text-xs font-mono text-gray-400">
-              <div>Wins: <strong className="text-white">{players[2].total_wins}</strong></div>
-              <div>Kills: <strong className="text-white">{players[2].total_kills}</strong></div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Search Input */}
       <div className="p-4 rounded-2xl bg-surface-100 border border-surface-border">
         <div className="relative">
           <Search className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search players by BGMI IGN, username, or display name..."
-            className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-surface-200 border border-surface-border text-white text-sm focus:border-brand-500 focus:outline-none"
-          />
+          <input type="search" value={search} onChange={(event) => { setSearch(event.target.value); setShareTarget(null); }}
+            placeholder={rankingType === 'players' ? 'Search by player name, username, or in-game name…' : 'Search teams by name or game…'}
+            className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-surface-200 border border-surface-border text-white text-sm focus:border-brand-500 focus:outline-none" />
         </div>
       </div>
 
-      {/* Leaderboard Table */}
+      {error && <p role="status" className="rounded-xl border border-rose-500/30 bg-rose-950/20 px-4 py-3 text-sm text-rose-200">{error}</p>}
+
       <div className="rounded-2xl bg-surface-100 border border-surface-border overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm font-mono">
-            <thead className="bg-surface-200/60 border-b border-surface-border text-xs uppercase text-gray-400">
-              <tr>
-                <th className="py-4 px-4 w-16 text-center">Rank</th>
-                <th className="py-4 px-4">Player</th>
-                <th className="py-4 px-4">BGMI In-Game Identity</th>
-                <th className="py-4 px-4 text-center">Tournaments</th>
-                <th className="py-4 px-4 text-center">Wins</th>
-                <th className="py-4 px-4 text-center">Kills</th>
-                <th className="py-4 px-4 text-right">VYROX Rating</th>
-              </tr>
+          <table className="w-full text-left text-sm">
+            <thead className="bg-surface-200/60 border-b border-surface-border text-xs uppercase text-gray-400 font-mono">
+              {rankingType === 'players' ? <tr>
+                <th className="py-4 px-4 text-center">Rank</th><th className="py-4 px-4">Player</th><th className="py-4 px-4">In-game identity</th>
+                <th className="py-4 px-4 text-center">Events</th><th className="py-4 px-4 text-center">Wins</th><th className="py-4 px-4 text-center">Kills</th><th className="py-4 px-4 text-right">Rating</th><th className="py-4 px-4 text-right">Share</th>
+              </tr> : <tr>
+                <th className="py-4 px-4 text-center">Rank</th><th className="py-4 px-4">Team</th><th className="py-4 px-4">Game</th>
+                <th className="py-4 px-4 text-center">Events</th><th className="py-4 px-4 text-center">Wins</th><th className="py-4 px-4 text-center">Kills</th><th className="py-4 px-4 text-right">Rating</th><th className="py-4 px-4 text-right">Share</th>
+              </tr>}
             </thead>
             <tbody className="divide-y divide-surface-border text-xs">
-              {filtered.map((player, idx) => (
-                <tr key={player.id} className="hover:bg-surface-50/50 transition-colors">
-                  <td className="py-4 px-4 text-center">
-                    <span className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold ${
-                      idx === 0 
-                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' 
-                        : idx === 1 
-                        ? 'bg-slate-300/20 text-slate-200 border border-slate-300/40' 
-                        : idx === 2 
-                        ? 'bg-amber-700/20 text-amber-500 border border-amber-700/40' 
-                        : 'text-gray-400'
-                    }`}>
-                      #{idx + 1}
-                    </span>
-                  </td>
-                  <td className="py-4 px-4">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-brand-900 border border-brand-500/30 flex items-center justify-center font-bold text-xs text-brand-300">
-                        {player.display_name.charAt(0)}
-                      </div>
-                      <div>
-                        <div className="font-semibold text-white font-sans text-sm">{player.display_name}</div>
-                        <div className="text-gray-400 text-[11px]">@{player.username}</div>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="py-4 px-4">
-                    <div className="text-cyanAccent-400 font-bold">{player.bgmi_ign || 'N/A'}</div>
-                    <div className="text-gray-500 text-[11px]">UID: {player.bgmi_uid || 'N/A'}</div>
-                  </td>
-                  <td className="py-4 px-4 text-center text-gray-300">
-                    {player.total_tournaments}
-                  </td>
-                  <td className="py-4 px-4 text-center font-bold text-amber-400">
-                    {player.total_wins}
-                  </td>
-                  <td className="py-4 px-4 text-center text-cyanAccent-400 font-semibold">
-                    {player.total_kills}
-                  </td>
-                  <td className="py-4 px-4 text-right">
-                    <span className="font-black text-brand-400 text-sm">
-                      {player.current_rating} PTS
-                    </span>
-                  </td>
-                </tr>
-              ))}
+              {rankingType === 'players' && filteredPlayers.map((player) => {
+                const badges = getUnlockedBadges(player.highest_rating ?? player.current_rating);
+                const rank = players.findIndex((row) => row.id === player.id) + 1;
+                return <tr key={player.id} className="hover:bg-surface-50/50">
+                  <td className="py-4 px-4 text-center"><span className="inline-flex min-w-8 h-8 px-1 items-center justify-center rounded-full bg-brand-900/70 text-brand-200 font-mono font-bold">#{rank}</span></td>
+                  <td className="py-4 px-4"><div className="flex items-center gap-3"><Avatar name={player.display_name} avatarUrl={player.avatar_url} className="w-9 h-9 text-sm" /><div><div className="font-semibold text-white text-sm">{player.display_name}</div><div className="text-gray-400">@{player.username}</div></div></div></td>
+                  <td className="py-4 px-4"><div className="text-cyanAccent-400 font-bold">BGMI: {player.bgmi_ign || '—'} <span className="text-gray-500">{player.bgmi_uid || ''}</span></div><div className="text-orange-300">Free Fire: {player.free_fire_ign || '—'} <span className="text-gray-500">{player.free_fire_uid || ''}</span></div></td>
+                  <td className="py-4 px-4 text-center text-gray-300">{player.total_tournaments}</td><td className="py-4 px-4 text-center font-bold text-amber-400">{player.total_wins}</td><td className="py-4 px-4 text-center text-cyanAccent-400 font-semibold">{player.total_kills}</td>
+                  <td className="py-4 px-4 text-right"><span className="font-black text-brand-300 text-sm">{player.current_rating} PTS</span>{badges.length > 0 && <div className="text-[10px] text-amber-300 mt-1">{badges.at(-1)?.icon} {badges.at(-1)?.name}</div>}</td>
+                  <td className="py-4 px-4 text-right"><button type="button" onClick={() => sharePlayer(player)} aria-label={`Create Instagram story card for ${player.display_name}`} className="p-2 rounded-lg text-gray-400 hover:text-white hover:bg-surface-200"><Share2 className="w-4 h-4" /></button></td>
+                </tr>;
+              })}
+              {rankingType === 'teams' && filteredTeams.map((team) => {
+                const badges = getUnlockedBadges(team.highest_rating);
+                const rank = teams.findIndex((row) => row.id === team.id) + 1;
+                return <tr key={team.id} className="hover:bg-surface-50/50">
+                  <td className="py-4 px-4 text-center"><span className="inline-flex min-w-8 h-8 px-1 items-center justify-center rounded-full bg-brand-900/70 text-brand-200 font-mono font-bold">#{rank}</span></td>
+                  <td className="py-4 px-4"><div className="font-semibold text-white text-sm flex items-center gap-2"><span className="w-9 h-9 rounded-xl bg-surface-200 border border-surface-border flex items-center justify-center"><Users className="w-4 h-4 text-cyanAccent-300" /></span>{team.name}</div></td>
+                  <td className="py-4 px-4 text-gray-300">{team.game}</td><td className="py-4 px-4 text-center text-gray-300">{team.tournaments_played}</td><td className="py-4 px-4 text-center font-bold text-amber-400">{team.total_wins}</td><td className="py-4 px-4 text-center text-cyanAccent-400 font-semibold">{team.total_kills}</td>
+                  <td className="py-4 px-4 text-right"><span className="font-black text-brand-300 text-sm">{team.current_rating} PTS</span>{badges.length > 0 && <div className="text-[10px] text-amber-300 mt-1">{badges.at(-1)?.icon} {badges.at(-1)?.name}</div>}</td>
+                  <td className="py-4 px-4 text-right"><button type="button" onClick={() => shareTeam(team)} aria-label={`Create Instagram story card for ${team.name}`} className="p-2 rounded-lg text-gray-400 hover:text-white hover:bg-surface-200"><Share2 className="w-4 h-4" /></button></td>
+                </tr>;
+              })}
+              {!isLoading && rows.length === 0 && <tr><td colSpan={8} className="py-12 px-4 text-center text-gray-400">{rankingType === 'players' ? 'No players match this search.' : 'No team results yet. Team rankings appear after a multi-player match is finalized.'}</td></tr>}
+              {isLoading && <tr><td colSpan={8} className="py-12 px-4 text-center text-gray-400">Loading rankings…</td></tr>}
             </tbody>
           </table>
         </div>
       </div>
+
+      {!isLoading && rankingType === 'players' && filteredPlayers.length > 0 && <p className="text-xs text-gray-500 text-center">Badges use peak rating, so unlocked achievements stay on the profile if rating changes later.</p>}
+      {storyData && <LeaderboardShareDialog data={storyData} onClose={() => setStoryData(null)} />}
     </div>
   );
 }

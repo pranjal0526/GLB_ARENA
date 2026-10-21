@@ -5,8 +5,9 @@ import {
   Payment, 
   Match, 
   Announcement, 
-  AdminAuditLog, 
-  RatingEvent 
+  AdminAuditLog,
+  RatingEvent,
+  PrizeAward,
 } from '../supabase/types';
 import { 
   initialTournaments, 
@@ -25,6 +26,8 @@ export interface VyroxStore {
   announcements: Announcement[];
   auditLogs: AdminAuditLog[];
   ratingEvents: RatingEvent[];
+  prizeAwards: PrizeAward[];
+  privateContactDetails?: Record<string, string>;
 }
 
 const STORAGE_KEY = 'vyrox_live_store_v2';
@@ -38,6 +41,8 @@ let memoryStore: VyroxStore = {
   announcements: JSON.parse(JSON.stringify(initialAnnouncements)),
   auditLogs: JSON.parse(JSON.stringify(initialAuditLogs)),
   ratingEvents: [],
+  prizeAwards: [],
+  privateContactDetails: {},
 };
 
 export const getStore = (): VyroxStore => {
@@ -46,6 +51,7 @@ export const getStore = (): VyroxStore => {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
         const parsed = JSON.parse(stored);
+        parsed.privateContactDetails ||= {};
         memoryStore = parsed;
         return memoryStore;
       } else {
@@ -81,6 +87,8 @@ export const resetStore = () => {
     announcements: JSON.parse(JSON.stringify(initialAnnouncements)),
     auditLogs: JSON.parse(JSON.stringify(initialAuditLogs)),
     ratingEvents: [],
+    prizeAwards: [],
+    privateContactDetails: {},
   };
   persistStore();
 };

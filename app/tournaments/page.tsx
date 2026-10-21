@@ -1,14 +1,16 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { Tournament, TournamentMode, TournamentStatus } from '@/lib/supabase/types';
 import { getTournaments } from '@/lib/services/tournament-service';
 import { TournamentCard } from '@/components/tournament-card';
-import { Search, Filter, Sparkles, Swords } from 'lucide-react';
+import { Search, Filter, Sparkles, Swords, Clock } from 'lucide-react';
 
 export default function TournamentsDirectoryPage() {
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [search, setSearch] = useState('');
+  const [selectedGame, setSelectedGame] = useState<'all' | 'BGMI' | 'Free Fire'>('all');
   const [selectedStatus, setSelectedStatus] = useState<TournamentStatus | 'all'>('all');
   const [selectedMode, setSelectedMode] = useState<TournamentMode | 'all'>('all');
   const [selectedFee, setSelectedFee] = useState<'all' | 'free' | 'paid'>('all');
@@ -20,16 +22,17 @@ export default function TournamentsDirectoryPage() {
       setIsLoading(true);
       const data = await getTournaments({
         search,
+        game: selectedGame,
         status: selectedStatus,
         mode: selectedMode,
         feeType: selectedFee,
         sortBy,
       });
-      setTournaments(data);
+        setTournaments(data.filter((tournament) => tournament.status !== 'completed' && tournament.status !== 'cancelled' && tournament.status !== 'draft'));
       setIsLoading(false);
     }
     load();
-  }, [search, selectedStatus, selectedMode, selectedFee, sortBy]);
+  }, [search, selectedGame, selectedStatus, selectedMode, selectedFee, sortBy]);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-8">
@@ -44,13 +47,16 @@ export default function TournamentsDirectoryPage() {
             Tournament Directory
           </h1>
           <p className="text-sm text-gray-400 mt-1">
-            Browse verified BGMI tournaments in India. Filter by game mode, registration status, and prize pool.
+            Find BGMI and Free Fire tournaments by game, mode, registration status, and prize pool.
           </p>
         </div>
 
         <div className="text-xs font-mono text-gray-400">
           Showing <span className="text-white font-bold">{tournaments.length}</span> tournaments
         </div>
+        <Link href="/tournaments/archive" className="inline-flex items-center gap-2 rounded-xl border border-surface-border bg-surface-100 px-4 py-2 text-xs font-mono text-gray-300 hover:text-white">
+          <Clock className="w-3.5 h-3.5" /> Past tournaments
+        </Link>
       </div>
 
       {/* Filter and Search Bar */}
@@ -74,6 +80,16 @@ export default function TournamentsDirectoryPage() {
             <span>Filters:</span>
           </div>
 
+          <select
+            value={selectedGame}
+            onChange={(e) => setSelectedGame(e.target.value as 'all' | 'BGMI' | 'Free Fire')}
+            className="px-3 py-1.5 rounded-lg bg-surface-200 border border-surface-border text-xs text-cyanAccent-400 focus:outline-none font-mono font-semibold"
+          >
+            <option value="all">All Games</option>
+            <option value="BGMI">BGMI</option>
+            <option value="Free Fire">Free Fire</option>
+          </select>
+
           {/* Mode Selector */}
           <select
             value={selectedMode}
@@ -93,10 +109,10 @@ export default function TournamentsDirectoryPage() {
             onChange={(e) => setSelectedStatus(e.target.value as TournamentStatus | 'all')}
             className="px-3 py-1.5 rounded-lg bg-surface-200 border border-surface-border text-xs text-gray-200 focus:outline-none font-mono"
           >
-            <option value="all">All Statuses</option>
-            <option value="open">Open for Registration</option>
+            <option value="all">All active statuses</option>
+            <option value="open">Registration Scheduled / Open</option>
+            <option value="registration_closed">Registration Closed</option>
             <option value="live">Live Now</option>
-            <option value="completed">Completed</option>
           </select>
 
           {/* Fee Selector */}
@@ -145,6 +161,7 @@ export default function TournamentsDirectoryPage() {
           <button
             onClick={() => {
               setSearch('');
+              setSelectedGame('all');
               setSelectedStatus('all');
               setSelectedMode('all');
               setSelectedFee('all');
