@@ -17,13 +17,17 @@ import {
 
 export function Navbar() {
   const pathname = usePathname();
-  const { currentUser, isAdmin, signOut } = useAuth();
+  const { currentUser, isAdmin, isAuthenticated, isLoading, signOut } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const isActive = (path: string) => {
     if (path === '/') return pathname === '/';
     return pathname.startsWith(path);
   };
+
+  // The organizer portal has its own command bar and section navigation.
+  // Rendering the site navbar there created two stacked navigation bars.
+  if (pathname.startsWith('/portal-admin-vyrox')) return null;
 
   return (
     <nav className="sticky top-0 z-50 w-full border-b border-surface-border bg-background/80 backdrop-blur-md">
@@ -131,7 +135,7 @@ export function Navbar() {
                   <LogOut className="w-4 h-4" />
                 </button>
               </div>
-            ) : (
+            ) : !isLoading && !isAuthenticated ? (
               <div className="flex items-center gap-2">
                 <Link
                   href="/auth/signin"
@@ -146,6 +150,8 @@ export function Navbar() {
                   Register
                 </Link>
               </div>
+            ) : (
+              <span className="text-xs text-gray-500" aria-live="polite">{isLoading ? 'Checking session…' : 'Account session active'}</span>
             )}
           </div>
 
@@ -214,7 +220,7 @@ export function Navbar() {
                 Sign Out
               </button>
             </>
-          ) : (
+          ) : !isLoading && !isAuthenticated ? (
             <div className="pt-2 flex flex-col gap-2">
               <Link
                 href="/auth/signin"
@@ -231,6 +237,8 @@ export function Navbar() {
                 Register
               </Link>
             </div>
+          ) : (
+            <p className="px-3 py-2 text-sm text-gray-500" aria-live="polite">{isLoading ? 'Checking session…' : 'Account session active'}</p>
           )}
         </div>
       )}

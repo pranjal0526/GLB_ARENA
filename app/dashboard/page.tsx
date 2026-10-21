@@ -333,6 +333,7 @@ export default function PlayerDashboard() {
               const isFree = reg.tournament?.entry_fee_paise === 0;
               const feeInr = (reg.tournament?.entry_fee_paise || 0) / 100;
               const isTeamLeader = reg.captain_id === currentUser.id;
+              const squadNeedsPlayer = reg.tournament?.mode === 'Squad' && (reg.members?.length || 0) < 2;
 
               return (
                 <div
@@ -365,7 +366,11 @@ export default function PlayerDashboard() {
                       </div>
                     </div>
 
-                    {isTeamLeader && reg.status === 'pending_payment' && (
+                    {isTeamLeader && reg.status === 'pending_payment' && squadNeedsPlayer && (
+                      <p className="max-w-xs text-right text-[11px] leading-relaxed text-amber-200">Approve at least one more player to make a 2–4 player squad. The leader then pays the entry fee once for the whole team.</p>
+                    )}
+
+                    {isTeamLeader && reg.status === 'pending_payment' && !squadNeedsPlayer && (
                       <button
                         onClick={() => setSelectedPayReg(reg)}
                         className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs uppercase tracking-wider shadow-glow-sm flex items-center gap-1.5 transition-all"

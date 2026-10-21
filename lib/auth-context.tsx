@@ -19,6 +19,7 @@ interface SignUpInput {
 
 interface AuthContextType {
   currentUser: Profile | null;
+  isAuthenticated: boolean;
   isAdmin: boolean;
   isLoading: boolean;
   signIn: (email: string, password: string) => Promise<{ success: boolean; error?: string; isAdmin?: boolean }>;
@@ -70,6 +71,7 @@ async function loadProfile(userId: string): Promise<Profile | null> {
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [currentUser, setCurrentUser] = useState<Profile | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -92,6 +94,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         const { data, error } = await supabase.auth.getSession();
         if (error) console.error('Could not restore the Supabase session:', error.message);
+        if (isMounted) setIsAuthenticated(Boolean(data.session));
         const profile = data.session ? await loadProfile(data.session.user.id) : null;
         if (isMounted) setCurrentUser(profile);
       } catch (profileError) {
@@ -103,6 +106,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     })();
 
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (isMounted) setIsAuthenticated(Boolean(session));
       // Defer database reads so they do not run inside Supabase's auth callback lock.
       window.setTimeout(async () => {
         if (!isMounted) return;
@@ -166,8 +170,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const profile = await loadProfile(data.user.id);
       if (!profile) {
         await supabase.auth.signOut();
+        setIsAuthenticated(false);
         return { success: false, error: 'Sign-in succeeded, but the player profile is missing. Ask the organizer to check the profile trigger and database migrations.' };
       }
+      setIsAuthenticated(true);
       if (profile.account_status !== 'active') {
         setCurrentUser(profile);
         return { success: true, isAdmin: false };
@@ -176,6 +182,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return { success: true, isAdmin: profile.role === 'admin' };
     } catch (profileError) {
       try { await createClient().auth.signOut(); } catch { /* Keep the original sign-in error. */ }
+      setIsAuthenticated(false);
       return { success: false, error: getAuthErrorMessage(profileError as { message?: string; code?: string }, 'Could not load your player profile.') };
     }
   };
@@ -218,8 +225,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const profile = await loadProfile(result.user.id);
       if (!profile) {
         await supabase.auth.signOut();
+        setIsAuthenticated(false);
         return { success: false, error: 'Your account was created, but its player profile is missing. Ask the organizer to check that migrations 001–004 ran successfully.' };
       }
+      setIsAuthenticated(true);
       setCurrentUser(profile);
       return { success: true };
     } catch (profileError) {
@@ -229,6 +238,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = async () => {
     if (isSupabaseConfigured()) await createClient().auth.signOut();
+    setIsAuthenticated(false);
     setCurrentUser(null);
   };
 
@@ -249,7 +259,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const isAdmin = currentUser?.role === 'admin' && currentUser.account_status === 'active';
 
   return (
-    <AuthContext.Provider value={{ currentUser, isAdmin, isLoading, signIn, signUp, signOut, updateCurrentUserProfile, refreshCurrentUserProfile }}>
+    <AuthContext.Provider value={{ currentUser, isAuthenticated, isAdmin, isLoading, signIn, signUp, signOut, updateCurrentUserProfile, refreshCurrentUserProfile }}>
       {children}
     </AuthContext.Provider>
   );

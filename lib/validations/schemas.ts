@@ -45,6 +45,17 @@ export const tournamentSchema = z.object({
   rules: z.string().min(10, 'Rules must be specified'),
   banner_url: z.string().url().optional().or(z.literal('')),
   room_release_policy: z.enum(['manual', '15_min_before', 'confirmed_only']),
+}).superRefine((tournament, context) => {
+  const teamSizeByMode = { Solo: 1, '1v1': 1, '2v2': 2, '3v3': 3, '4v4': 4, Duo: 2, Squad: 4 } as const;
+  if (tournament.team_size !== teamSizeByMode[tournament.mode]) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['team_size'],
+      message: tournament.mode === 'Squad'
+        ? 'Squad teams have a maximum of 4 players; at least 2 approved players are required before they can enter a lobby.'
+        : `${tournament.mode} entries require exactly ${teamSizeByMode[tournament.mode]} player(s).`,
+    });
+  }
 });
 
 export const registrationSchema = z.object({

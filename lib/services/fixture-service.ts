@@ -36,6 +36,13 @@ function labelWithMatchNumber(label: string, matchNumber: number): string {
   return label.replace(/^Match\s*\d+/i, `Match ${matchNumber}`);
 }
 
+function hasIncompleteSquadRoster(tournament: { mode: string }, registrations: Registration[]): boolean {
+  return tournament.mode === 'Squad' && registrations.some((registration) => {
+    const rosterSize = registration.members?.length || 0;
+    return rosterSize < 2 || rosterSize > 4;
+  });
+}
+
 async function loadDatabaseMatches(tournamentId?: string, matchIds?: string[], includeAllParticipants = false): Promise<Match[]> {
   const supabase = createClient();
   let query = supabase.from('matches').select(MATCH_FIELDS).order('scheduled_time');
@@ -377,6 +384,7 @@ export async function generateBattleRoyaleLobby(
     if ((await getMatchesByTournament(tournamentId)).length > 0) return { success: false, error: 'The first lobby already exists. Use “Add another Battle Royale lobby”.' };
     const registrations = (await getAllRegistrations()).filter((registration) => registration.tournament_id === tournamentId && registration.status === 'confirmed');
     if (!registrations.length) return { success: false, error: 'No confirmed registrations available for lobby' };
+    if (hasIncompleteSquadRoster(tournament, registrations)) return { success: false, error: 'Every Squad entry needs 2 to 4 approved players before a Battle Royale lobby can be created.' };
     const { data: matchId, error } = await createClient().rpc('create_match_with_participants', {
       p_tournament_id: tournamentId, p_round_number: 1, p_round_label: matchLabel,
       p_match_number: 1, p_format: 'Battle Royale', p_scheduled_time: tournament.start_time,
@@ -400,6 +408,7 @@ export async function generateBattleRoyaleLobby(
   if (eligibleRegs.length === 0) {
     return { success: false, error: 'No confirmed registrations available for lobby' };
   }
+  if (hasIncompleteSquadRoster(tournament, eligibleRegs)) return { success: false, error: 'Every Squad entry needs 2 to 4 approved players before a Battle Royale lobby can be created.' };
 
   const matchId = `match-br-${tournamentId}-${Date.now()}`;
   const participants: MatchParticipant[] = eligibleRegs.map((reg, idx) => ({
@@ -468,6 +477,7 @@ export async function createCustomMatch(params: {
     if (!tournament) return { success: false, error: 'Tournament not found' };
     if (tournament.tournament_format !== 'Battle Royale') return { success: false, error: 'Custom lobbies can only be added to Battle Royale tournaments.' };
     if (!targetRegistrations.length) return { success: false, error: 'Approve at least one entry before creating a lobby.' };
+    if (hasIncompleteSquadRoster(tournament, targetRegistrations)) return { success: false, error: 'Every Squad entry needs 2 to 4 approved players before a Battle Royale lobby can be created.' };
     const matchNumber = nextBattleRoyaleMatchNumber(existing);
     const roundLabel = labelWithMatchNumber(params.roundLabel, matchNumber);
     const { data: matchId, error } = await createClient().rpc('create_match_with_participants', {
@@ -502,6 +512,7 @@ export async function createCustomMatch(params: {
     ? eligibleRegs.filter(r => params.participantRegistrationIds!.includes(r.id))
     : eligibleRegs;
   if (!targetRegs.length) return { success: false, error: 'Approve at least one entry before creating a lobby.' };
+  if (hasIncompleteSquadRoster(tournament, targetRegs)) return { success: false, error: 'Every Squad entry needs 2 to 4 approved players before a Battle Royale lobby can be created.' };
 
   const participants: MatchParticipant[] = targetRegs.map((reg, idx) => ({
     id: `mp-c-${Date.now()}-${idx + 1}`,
@@ -631,7 +642,10 @@ export async function recordMatchResults(
     if (!values.length) return false;
     const registration = store.registrations.find((row) => row.id === result.registrationId);
     const roster = registration?.members || [];
-    return roster.length !== tournament.team_size || roster.some((member) => {
+    const validRosterSize = tournament.mode === 'Squad'
+      ? roster.length >= 2 && roster.length <= 4
+      : roster.length === tournament.team_size;
+    return !validRosterSize || roster.some((member) => {
       const value = result.memberKills?.[member.uid];
       return value === undefined || value.trim() === '' || !/^\d+$/.test(value);
     }) || roster.reduce((sum, member) => sum + Number(result.memberKills?.[member.uid]), 0) !== result.kills;

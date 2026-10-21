@@ -354,8 +354,13 @@ export default function SecureAdminPortalPage() {
       setAdminError('Enter at least one team or player slot.');
       return;
     }
-    if (!Number.isInteger(Number(newTeamSize)) || Number(newTeamSize) < 1 || Number(newTeamSize) > 6) {
-      setAdminError('Team size must be between 1 and 6 players.');
+    const expectedTeamSize: Record<TournamentMode, number> = {
+      Solo: 1, '1v1': 1, '2v2': 2, '3v3': 3, '4v4': 4, Duo: 2, Squad: 4,
+    };
+    if (!Number.isInteger(Number(newTeamSize)) || Number(newTeamSize) !== expectedTeamSize[newMode]) {
+      setAdminError(newMode === 'Squad'
+        ? 'Squad tournaments allow 2 to 4 players per team. Four is the team maximum.'
+        : `${newMode} tournaments require ${expectedTeamSize[newMode]} player${expectedTeamSize[newMode] === 1 ? '' : 's'} per entry.`);
       return;
     }
     if (editingTournament && Number(newMaxSlots) < (editingTournament.registered_count || 0)) {
@@ -1460,14 +1465,16 @@ export default function SecureAdminPortalPage() {
                     <button
                       disabled={!selectedTournamentId || tourneyConfirmedRegs.length === 0}
                       onClick={handleGenerateStandardFixtures}
+                      title="Creates Match 1 and assigns every confirmed entry to its first Battle Royale lobby."
                       className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-brand-600 to-cyanAccent-600 text-white font-bold text-xs disabled:opacity-40"
                     >
-                      Create first lobby ({tourneyConfirmedRegs.length} confirmed)
+                      Create first Battle Royale lobby ({tourneyConfirmedRegs.length} confirmed)
                     </button>
                   ) : null}
                   {!isKnockoutTournament && (
                     <button
                       disabled={!selectedTournamentId || tourneyConfirmedRegs.length === 0}
+                      title="Creates the next numbered Battle Royale match for a new map or session. It has its own room credentials."
                       onClick={() => {
                         setAdminError(null);
                         const nextMatchNumber = Math.max(currentTourneyMatches.length, 0, ...currentTourneyMatches.map((match) => match.match_number || 0)) + 1;
@@ -1482,6 +1489,12 @@ export default function SecureAdminPortalPage() {
                     </button>
                   )}
                 </div>}
+
+                {currentTourney?.tournament_format === 'Battle Royale' && fixtureMatchView === 'active' && !currentTourneyIsArchived && (
+                  <p className="mt-3 rounded-lg border border-cyanAccent-500/20 bg-cyanAccent-500/5 px-3 py-2 text-[11px] leading-relaxed text-gray-300">
+                    The first lobby creates Match 1 for all confirmed entrants. Each additional lobby creates the next numbered match for another map or session, with its own room ID and password. Only free entries or paid entries verified by an admin are included.
+                  </p>
+                )}
               </div>
 
               {/* Tournament Confirmed Squads preview */}
@@ -2464,7 +2477,7 @@ export default function SecureAdminPortalPage() {
                     disabled={editingHasEntries}
                     className="w-full px-3 py-2 rounded-xl bg-surface-200 border border-surface-border text-white"
                   >
-                    <option value="Squad">Squad (4 players)</option>
+                    <option value="Squad">Squad Battle Royale (2–4 players per team)</option>
                     <option value="1v1">1v1 Arena (individual players)</option>
                     <option value="2v2">2v2 Arena (teams of 2)</option>
                     <option value="3v3">3v3 Arena (teams of 3)</option>
@@ -2472,7 +2485,7 @@ export default function SecureAdminPortalPage() {
                     <option value="Solo">Solo Battle Royale</option>
                     <option value="Duo">Duo (2 players)</option>
                   </select>
-                  <p className="mt-1 text-[11px] text-gray-500">Squad means four players competing together in Battle Royale. 4v4 means two four-player teams face each other in separate arena fixtures.</p>
+                  <p className="mt-1 text-[11px] text-gray-500">Squad Battle Royale teams need at least 2 approved players and can have up to 4; the team leader pays one entry fee for the team. 4v4 is a separate arena format with two fixed four-player teams facing each other.</p>
                 </div>
                 <div>
                   <label className="block text-gray-400 uppercase mb-1">Format</label>
@@ -2528,6 +2541,7 @@ export default function SecureAdminPortalPage() {
                   <div>
                     <label className="block text-gray-400 uppercase mb-1">Entry fee (₹)</label>
                     <input type="number" min="0" step="0.01" value={newEntryFeeInr} onChange={(e) => setNewEntryFeeInr(e.target.value)} required disabled={editingHasEntries} className="w-full px-3 py-2 rounded-xl bg-surface-100 border border-surface-border text-white disabled:opacity-60" />
+                    {newMode === 'Squad' && <p className="mt-1 text-[10px] text-gray-500">One payment covers the entire 2–4 player squad; it is not charged per player.</p>}
                   </div>
                   <div>
                     <label className="block text-gray-400 uppercase mb-1">Total prize pool (₹)</label>

@@ -97,7 +97,7 @@ export default function TournamentsDirectoryPage() {
             className="px-3 py-1.5 rounded-lg bg-surface-200 border border-surface-border text-xs text-gray-200 focus:outline-none font-mono"
           >
             <option value="all">All Modes</option>
-            <option value="Squad">Squad (4-player Battle Royale)</option>
+            <option value="Squad">Squad (2–4 player Battle Royale)</option>
             <option value="1v1">1v1 Arena</option>
             <option value="2v2">2v2 Arena</option>
             <option value="3v3">3v3 Arena</option>

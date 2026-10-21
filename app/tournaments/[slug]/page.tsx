@@ -229,7 +229,7 @@ export default function TournamentDetailPage() {
         await loadData();
 
         // If paid, immediately open UPI payment modal!
-        if (!isFree && canUsePaidRegistration) {
+        if (!isFree && canUsePaidRegistration && (tournament.mode !== 'Squad' || (res.registration.members?.length || 0) >= 2)) {
           setPaymentModalOpen(true);
         }
       }
@@ -466,7 +466,7 @@ export default function TournamentDetailPage() {
         <section className="p-6 md:p-8 rounded-3xl bg-surface-100 border border-surface-border space-y-5">
           <div>
             <h2 className="font-display font-bold text-xl text-white">Tournament teams</h2>
-            <p className="mt-1 text-sm text-gray-400">Create a team for this event, then let players request to join. The leader approves the roster and can transfer leadership. You may join a different team in another tournament, but only one team in this event.</p>
+            <p className="mt-1 text-sm text-gray-400">Create a team for this event, then let players request to join. The leader approves the roster and can transfer leadership. You may join a different team in another tournament, but only one team in this event.{tournament.mode === 'Squad' ? ' Squad Battle Royale teams require 2–4 approved players; paid entry is charged once for the team.' : ''}</p>
           </div>
 
           {teamActionError && <div role="alert" className="rounded-xl border border-rose-500/30 bg-rose-950/20 px-4 py-3 text-sm text-rose-300">{teamActionError}</div>}
@@ -480,6 +480,7 @@ export default function TournamentDetailPage() {
                 <div>
                   <h3 className="font-bold text-white">Your team: {myTeam.team_name || 'Tournament entry'}</h3>
                   <p className="text-xs text-gray-400 mt-1">{myTeam.member_count} of {myTeam.team_size} roster spots filled · {myTeam.is_leader ? 'You are the leader' : 'Your leader manages requests and payment'}</p>
+                  {tournament.mode === 'Squad' && <p className="mt-2 rounded-lg border border-amber-500/20 bg-amber-950/10 px-3 py-2 text-xs leading-relaxed text-amber-200">Squads need 2 to 4 approved players. The team leader submits one entry payment for the whole squad after at least 2 players have joined. Fixtures can only be created once the squad has 2 or more players.</p>}
                 </div>
                 <span className="px-2.5 py-1 rounded-full text-[10px] font-mono uppercase text-cyanAccent-300 bg-cyanAccent-950/40 border border-cyanAccent-500/30">{userRegistration?.status || 'registered'}</span>
               </div>
@@ -585,7 +586,7 @@ export default function TournamentDetailPage() {
                 {tournament.team_size > 1 ? 'Create Tournament Team' : 'Solo Player Registration'} — {tournament.title}
               </h3>
               <p className="text-xs text-gray-400 mt-0.5 font-mono">
-                Format: {tournament.mode} ({tournament.team_size} Players) • Entry: {isFree ? 'FREE' : `₹${entryFeeInr}`}
+                Format: {tournament.mode} ({tournament.mode === 'Squad' ? '2–4 Players' : `${tournament.team_size} Players`}) • Entry: {isFree ? 'FREE' : `₹${entryFeeInr}`}
               </p>
             </div>
             <button
@@ -598,7 +599,7 @@ export default function TournamentDetailPage() {
 
           <form onSubmit={handleRegisterSubmit} className="space-y-6">
             <p className="text-[11px] text-gray-500">Enter the in-game identity saved to your account for this game.</p>
-            {tournament.team_size > 1 && <div role="note" className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-950/20 px-4 py-3 text-xs leading-relaxed text-amber-200"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>You are creating a team as its first member. Other players request to join, and you approve the roster. After registration closes, the roster is locked. You can transfer team leadership to an approved member.</span></div>}
+            {tournament.team_size > 1 && <div role="note" className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-950/20 px-4 py-3 text-xs leading-relaxed text-amber-200"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>You are creating a team as its first member. Other players request to join, and you approve the roster. After registration closes, the roster is locked. You can transfer team leadership to an approved member.{tournament.mode === 'Squad' ? ' Squad rosters must have 2–4 players; for paid events, the leader pays once for the whole team after a second player is approved.' : ''}</span></div>}
             {regError && (
               <div className="p-3 rounded-xl bg-red-950/50 border border-red-500/40 text-xs text-red-300 flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 flex-shrink-0" />
