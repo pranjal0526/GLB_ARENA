@@ -64,7 +64,7 @@ export default function PlayerDashboard() {
     const confirmedTourneyIds = regs.filter(r => r.status === 'confirmed').map(r => r.tournament_id);
     for (const tId of confirmedTourneyIds) {
       const tourneyMatches = await getMatchesByTournament(tId);
-      tourneyMatches.forEach(tm => {
+      tourneyMatches.filter((match) => match.format === 'Battle Royale').forEach(tm => {
         if (!userMatches.some(um => um.id === tm.id)) {
           userMatches.push(tm);
         }
@@ -118,6 +118,7 @@ export default function PlayerDashboard() {
   const pastTournamentIds = new Set(pastRegistrations.map((registration) => registration.tournament_id));
   const activeMatches = matches.filter((match) => !pastTournamentIds.has(match.tournament_id));
   const confirmedRegs = activeRegistrations.filter(r => r.status === 'confirmed');
+  const sharedRoomRegs = confirmedRegs.filter((registration) => registration.tournament?.tournament_format === 'Battle Royale');
   const battleRoyaleMatchesByTournament = new Map<string, Match[]>();
   for (const match of activeMatches.filter((item) => item.format === 'Battle Royale')) {
     const group = battleRoyaleMatchesByTournament.get(match.tournament_id) || [];
@@ -191,7 +192,7 @@ export default function PlayerDashboard() {
       </div>
 
       {/* 2. PROMINENT VERIFIED CUSTOM ROOM ACCESS PASS (Item 2 Requested by User) */}
-      {confirmedRegs.length > 0 && (
+      {sharedRoomRegs.length > 0 && (
         <div className="space-y-4">
           <div className="flex items-center gap-2">
             <div className="w-6 h-6 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center">
@@ -206,7 +207,7 @@ export default function PlayerDashboard() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {confirmedRegs.map((reg) => {
+            {sharedRoomRegs.map((reg) => {
               const tourney = reg.tournament;
               const hasRoom = tourney?.room_id && tourney?.room_password;
 
@@ -219,7 +220,7 @@ export default function PlayerDashboard() {
                     <div>
                       <div className="text-xs font-mono text-emerald-400 font-bold uppercase flex items-center gap-1.5">
                         <ShieldCheck className="w-4 h-4" />
-                        <span>CONFIRMED SQUAD ACCESS PASS</span>
+                        <span>CONFIRMED BATTLE ROYALE ENTRY</span>
                       </div>
                       <h3 className="font-display font-black text-white text-lg mt-0.5">
                         {tourney?.title}
@@ -436,7 +437,7 @@ export default function PlayerDashboard() {
         {activeMatches.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {activeMatches.map((m) => {
-              const isMatchRoomUnlocked = m.room_released || confirmedRegs.some(r => r.tournament_id === m.tournament_id);
+              const isMatchRoomUnlocked = Boolean(m.room_id && m.room_password);
 
               return (
                 <div key={m.id} className="p-6 rounded-3xl bg-surface-100 border border-surface-border space-y-4">
@@ -478,14 +479,14 @@ export default function PlayerDashboard() {
                   ) : (
                     <div className="p-3.5 rounded-2xl bg-surface-200 border border-surface-border text-xs font-mono text-gray-400 flex items-center gap-2">
                       <Lock className="w-4 h-4 text-gray-500 flex-shrink-0" />
-                      <span>Lobby credentials will unlock 15 minutes before the match start time.</span>
+                      <span>{m.format === 'Battle Royale' ? 'Lobby credentials will appear after the organizer releases them.' : 'Room details for your assigned matchup will appear here after the organizer releases them.'}</span>
                     </div>
                   )}
 
                   {/* Participants in lobby */}
                   {m.participants && m.participants.length > 0 && (
                     <div className="text-[11px] font-mono text-gray-400">
-                      Lobby Squads: <strong className="text-white">{m.participants.length}</strong> assigned
+                      {m.format === 'Battle Royale' ? 'Lobby entries:' : 'Entrants:'} <strong className="text-white">{m.participants.length}</strong> assigned
                     </div>
                   )}
                 </div>

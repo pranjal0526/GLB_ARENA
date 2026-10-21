@@ -29,6 +29,7 @@ interface PlayerHistory {
   ratings: Array<{ id: string; description: string; previous_rating: number; rating_change: number; new_rating: number; created_at: string; match_id?: string | null; tournament_id?: string | null }>;
   registrations: Array<{ id: string; team_name?: string | null; registration_code: string; status: string; slot_number?: number | null; created_at: string; tournament?: { title: string; status: string } | null }>;
   team_entries: Array<{ id: string; ign: string; uid: string; role: string; created_at: string; registration?: { team_name?: string | null; status: string; tournament?: { title: string; status: string } | null } | null }>;
+  team_departures: Array<{ id: string; registration_id: string; tournament_id: string; tournament_title?: string | null; team_name?: string | null; ign: string; uid: string; former_role: string; departed_at: string }>;
   verifications: Array<{ id: string; game: string; game_ign: string; game_uid: string; status: string; reviewer_note?: string | null; submitted_at: string }>;
   profile_events: Array<{ id: string; event_type: string; changed_fields: string[]; before_values?: Record<string, unknown> | null; after_values: Record<string, unknown>; created_at: string }>;
   audit_events: Array<{ id: string; action: string; created_at: string; metadata: Record<string, unknown> }>;
@@ -89,6 +90,7 @@ export function PlayerAccountDetails({ playerId }: { playerId: string }) {
     <section><h4 className="mb-2 font-bold text-white">Tournament entries ({history.registrations.length})</h4>
       {history.registrations.length ? <ul className="space-y-1 text-gray-300">{history.registrations.map((entry) => <li key={entry.id}>{dateText(entry.created_at)} · {entry.tournament?.title || 'Deleted event'} · {entry.team_name || 'Solo entry'} · {entry.status} · {entry.registration_code}</li>)}</ul> : <p className="text-gray-500">No captain entries.</p>}
       {history.team_entries.length > 0 && <ul className="mt-2 space-y-1 text-gray-300">{history.team_entries.map((entry) => <li key={entry.id}>{dateText(entry.created_at)} · {entry.registration?.tournament?.title || 'Tournament'} · {entry.registration?.team_name || 'Squad'} · {entry.ign} (ID {entry.uid}) · {entry.registration?.status}</li>)}</ul>}
+      {history.team_departures.length > 0 && <div className="mt-3"><h5 className="mb-1 font-semibold text-gray-200">Previous team memberships ({history.team_departures.length})</h5><ul className="space-y-1 text-gray-300">{history.team_departures.map((entry) => <li key={entry.id}>{dateText(entry.departed_at)} · {entry.tournament_title || 'Tournament'} · {entry.team_name || 'Tournament team'} · {entry.ign} (ID {entry.uid}) · left as {entry.former_role}</li>)}</ul></div>}
     </section>
 
     <section><h4 className="mb-2 font-bold text-white">Rating history ({history.ratings.length})</h4>

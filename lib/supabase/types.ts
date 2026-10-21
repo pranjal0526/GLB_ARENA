@@ -26,7 +26,7 @@ export interface Profile {
 
 export type GameTitle = 'BGMI' | 'Free Fire';
 
-export type TournamentMode = 'Solo' | '1v1' | 'Duo' | 'Squad';
+export type TournamentMode = 'Solo' | '1v1' | '2v2' | '3v3' | '4v4' | 'Duo' | 'Squad';
 export type TournamentFormat = 'Single Elimination' | 'Round Robin' | 'Battle Royale';
 export type TournamentStatus = 'draft' | 'open' | 'registration_closed' | 'live' | 'completed' | 'cancelled';
 export type RoomReleasePolicy = 'manual' | '15_min_before' | 'confirmed_only';

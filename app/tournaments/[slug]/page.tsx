@@ -18,6 +18,7 @@ import {
   requestToJoinTournamentTeam,
   reviewTournamentTeamRequest,
   transferTournamentTeamLeadership,
+  leaveTournamentTeam,
   TournamentTeamOverview,
 } from '@/lib/services/registration-service';
 import { getMatchesByTournament } from '@/lib/services/fixture-service';
@@ -260,6 +261,11 @@ export default function TournamentDetailPage() {
 
   const isUserConfirmed = userRegistration?.status === 'confirmed';
   const showRoomDetails = (isUserConfirmed || isAdmin) && Boolean(roomCredentials?.room_id && roomCredentials.room_password);
+  const canLeaveTeam = Boolean(
+    userRegistration
+    && registrationCanStart
+    && !matches.some((match) => match.participants?.some((participant) => participant.registration_id === userRegistration.id))
+  );
   const fixtureMatches = tournament.tournament_format === 'Battle Royale'
     ? [...matches].sort((a, b) => a.created_at.localeCompare(b.created_at) || a.scheduled_time.localeCompare(b.scheduled_time) || a.id.localeCompare(b.id))
     : matches;
@@ -406,7 +412,7 @@ export default function TournamentDetailPage() {
       </div>
 
       {/* 2. RESTRICTED ROOM CREDENTIALS BANNER (Security Sensitive) */}
-      <div className={`p-6 rounded-2xl border ${
+      {tournament.tournament_format === 'Battle Royale' ? <div className={`p-6 rounded-2xl border ${
         showRoomDetails 
           ? 'bg-gradient-to-r from-emerald-950/40 to-surface-100 border-emerald-500/40 shadow-glow-sm' 
           : 'bg-surface-100 border-surface-border'
@@ -451,7 +457,10 @@ export default function TournamentDetailPage() {
             </div>
           )}
         </div>
-      </div>
+      </div> : <div className="flex items-center gap-3 rounded-2xl border border-cyanAccent-500/20 bg-cyanAccent-950/10 px-5 py-4 text-sm text-gray-300">
+        <Key className="h-5 w-5 shrink-0 text-cyanAccent-400" />
+        <span>Each head-to-head fixture has its own room ID and password. Confirmed players assigned to that matchup will see them on its match card after the organizer releases them.</span>
+      </div>}
 
       {tournament.team_size > 1 && (
         <section className="p-6 md:p-8 rounded-3xl bg-surface-100 border border-surface-border space-y-5">
@@ -494,6 +503,28 @@ export default function TournamentDetailPage() {
                   </div>
                 ))}
               </div>
+              {myTeam.is_leader ? (
+                <p className="rounded-xl border border-amber-500/30 bg-amber-950/20 px-3 py-2.5 text-xs leading-relaxed text-amber-200">
+                  To leave this team, first transfer leadership to another player above. Team changes close when registration closes or fixtures are created.
+                </p>
+              ) : (
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-surface-border pt-4">
+                  <p className="text-xs text-gray-400">You can leave and request to join another team before fixtures are created.{tournament.entry_fee_paise > 0 ? ' Leaving does not cancel or refund this team’s entry payment.' : ''}</p>
+                  <button
+                    type="button"
+                    disabled={Boolean(teamActionBusy) || !canLeaveTeam}
+                    onClick={() => {
+                      if (window.confirm(`Leave ${myTeam.team_name || 'this tournament team'}? You can then request to join another team in this tournament.`)) {
+                        void runTeamAction('leave-team', () => leaveTournamentTeam(myTeam.registration_id), 'You left the team. You can now request to join another team.');
+                      }
+                    }}
+                    className="rounded-lg border border-rose-500/40 px-3 py-2 text-xs font-semibold text-rose-300 hover:bg-rose-950/30 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {teamActionBusy === 'leave-team' ? 'Leaving…' : 'Leave team'}
+                  </button>
+                  {!canLeaveTeam && <span className="basis-full text-right text-[11px] text-amber-300">Leaving is locked after registration closes or fixtures are created.</span>}
+                </div>
+              )}
               {myTeam.is_leader && incomingTeamRequests.length > 0 && (
                 <div className="border-t border-surface-border pt-4 space-y-3">
                   <h4 className="text-sm font-bold text-white">Join requests ({incomingTeamRequests.length})</h4>
@@ -529,8 +560,6 @@ export default function TournamentDetailPage() {
                       <span className="text-xs text-emerald-300">Your team</span>
                     ) : requestIsPending ? (
                       <span className="text-xs text-amber-300">Request pending</span>
-                    ) : team.request_status === 'approved' ? (
-                      <span className="text-xs text-emerald-300">Joined</span>
                     ) : canRequest ? (
                       <button type="button" disabled={Boolean(teamActionBusy)} onClick={() => runTeamAction(`request-${team.registration_id}`, () => requestToJoinTournamentTeam(team.registration_id), `Join request sent to ${team.leader_name}.`)} className="rounded-xl bg-gradient-to-r from-brand-600 to-cyanAccent-600 px-4 py-2.5 text-xs font-bold text-white disabled:opacity-50">
                         {teamActionBusy === `request-${team.registration_id}` ? 'Sending…' : 'Request to join'}
@@ -798,6 +827,9 @@ export default function TournamentDetailPage() {
                     </div>
                     <StatusBadge status={m.status} size="sm" />
                   </div>
+                  {tournament.tournament_format === 'Single Elimination' && m.participants?.length === 1 && (
+                    <div className="rounded-lg border border-amber-500/20 bg-amber-950/10 px-3 py-2 text-[11px] font-mono text-amber-200">BYE · this entry advances automatically; no room is needed.</div>
+                  )}
 
                   {/* Match Participants List */}
                   <div className="space-y-2 pt-1 font-mono text-xs">
@@ -824,6 +856,20 @@ export default function TournamentDetailPage() {
                       </div>
                     ))}
                   </div>
+                  {(isAdmin || (userRegistration?.status === 'confirmed' && m.participants?.some((participant) => participant.registration_id === userRegistration.id))) && (
+                    <div className={`rounded-xl border px-3.5 py-3 ${m.room_released && m.room_id && m.room_password ? 'border-emerald-500/30 bg-emerald-950/20' : 'border-surface-border bg-surface-200/50'}`}>
+                      <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-wide text-gray-400">
+                        <Key className="h-3.5 w-3.5 text-cyanAccent-400" />
+                        <span>Room details for this matchup</span>
+                      </div>
+                      {m.room_released && m.room_id && m.room_password ? (
+                        <div className="mt-2 flex flex-wrap gap-x-8 gap-y-2 font-mono text-sm">
+                          <div><span className="text-[10px] uppercase text-gray-500">Room ID</span><div className="select-all font-bold text-white">{m.room_id}</div></div>
+                          <div><span className="text-[10px] uppercase text-gray-500">Password</span><div className="select-all font-bold text-cyanAccent-400">{m.room_password}</div></div>
+                        </div>
+                      ) : <p className="mt-1 text-xs text-gray-500">The organizer has not released this matchup’s room details yet.</p>}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

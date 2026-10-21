@@ -143,7 +143,9 @@ export async function generateSingleEliminationFixtures(
     const tournament = await getTournamentById(tournamentId);
     if (!tournament) return { success: false, error: 'Tournament not found' };
     if (tournament.tournament_format !== 'Single Elimination') return { success: false, error: 'This event is not set up as a knockout tournament.' };
-    const registrations = (await getAllRegistrations()).filter((registration) => registration.tournament_id === tournamentId && registration.status === 'confirmed');
+    const registrations = (await getAllRegistrations())
+      .filter((registration) => registration.tournament_id === tournamentId && registration.status === 'confirmed')
+      .sort((a, b) => (a.slot_number || 0) - (b.slot_number || 0) || a.created_at.localeCompare(b.created_at));
     if (registrations.length < 2) return { success: false, error: 'At least 2 confirmed participants are required to generate fixtures' };
     const existingMatches = await getMatchesByTournament(tournamentId);
     if (existingMatches.length > 0) return { success: false, error: 'Fixtures already exist. Use “Create next knockout round” after scoring the current round.' };
@@ -173,7 +175,7 @@ export async function generateSingleEliminationFixtures(
   // Only confirmed registrations are eligible
   const eligibleRegs = store.registrations.filter(
     r => r.tournament_id === tournamentId && r.status === 'confirmed'
-  );
+  ).sort((a, b) => (a.slot_number || 0) - (b.slot_number || 0) || a.created_at.localeCompare(b.created_at));
 
   if (eligibleRegs.length < 2) {
     return { success: false, error: 'At least 2 confirmed participants are required to generate fixtures' };
@@ -199,7 +201,7 @@ export async function generateSingleEliminationFixtures(
         participant_slot: 1,
         kills: 0,
         points: 0,
-        is_winner: false,
+        is_winner: !regB,
         registration: regA,
       },
     ];
@@ -225,12 +227,13 @@ export async function generateSingleEliminationFixtures(
       match_number: matchNumber,
       format: 'Single Elimination',
       scheduled_time: new Date(new Date(tournament.start_time).getTime() + (matchNumber - 1) * 1800000).toISOString(),
-      status: 'scheduled',
-      room_id: tournament.room_id || 'ROOM-PENDING',
-      room_password: tournament.room_password || 'PASS-PENDING',
-      room_released: tournament.room_released || false,
+      status: regB ? 'scheduled' : 'completed',
+      room_id: null,
+      room_password: null,
+      room_released: false,
       participants,
       created_at: new Date().toISOString(),
+      completed_at: regB ? null : new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
 
@@ -569,7 +572,7 @@ export async function releaseMatchRoomCredentials(
 
   // Also sync to tournament default if not set
   const tourney = store.tournaments.find(t => t.id === match.tournament_id);
-  if (tourney && !tourney.room_id) {
+  if (tourney?.tournament_format === 'Battle Royale' && !tourney.room_id) {
     tourney.room_id = roomId;
     tourney.room_password = roomPassword;
     tourney.room_released = true;

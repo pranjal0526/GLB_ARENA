@@ -33,7 +33,7 @@ export const tournamentSchema = z.object({
   slug: z.string().min(3, 'Slug must be at least 3 characters').regex(/^[a-z0-9-]+$/, 'Slug must be lowercase alphanumeric with hyphens'),
   description: z.string().min(10, 'Description must be at least 10 characters'),
   game: z.enum(['BGMI', 'Free Fire']).default('BGMI'),
-  mode: z.enum(['Solo', '1v1', 'Duo', 'Squad']),
+  mode: z.enum(['Solo', '1v1', '2v2', '3v3', '4v4', 'Duo', 'Squad']),
   team_size: z.coerce.number().min(1).max(6),
   tournament_format: z.enum(['Single Elimination', 'Round Robin', 'Battle Royale']),
   entry_fee_inr: z.coerce.number().min(0, 'Entry fee cannot be negative'),

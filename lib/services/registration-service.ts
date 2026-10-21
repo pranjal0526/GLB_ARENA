@@ -207,6 +207,10 @@ export function transferTournamentTeamLeadership(registrationId: string, newLead
   return callTeamAction('transfer_tournament_team_leadership', { p_registration_id: registrationId, p_new_leader_id: newLeaderId });
 }
 
+export function leaveTournamentTeam(registrationId: string): Promise<TeamActionResult> {
+  return callTeamAction('leave_tournament_team', { p_registration_id: registrationId });
+}
+
 export async function getRegistrationById(id: string): Promise<Registration | null> {
   if (!isSupabaseConfigured()) {
     const store = getStore();

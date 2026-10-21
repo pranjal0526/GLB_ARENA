@@ -199,7 +199,7 @@ export default async function HomePage() {
             </div>
             <h3 className="font-display font-bold text-white text-base mb-2">Register & Pay</h3>
             <p className="text-xs text-gray-400 leading-relaxed">
-              Choose your format (Solo, 1v1, or Squad). For paid events, scan the manual UPI QR and submit your 12-digit UTR.
+              Choose Solo or Battle Royale, or enter a 1v1, 2v2, 3v3, or 4v4 arena event. Arena fixtures pair two players or two complete teams.
             </p>
           </div>
 
@@ -332,7 +332,7 @@ export default async function HomePage() {
               When are custom room ID and passwords released?
             </h4>
             <p className="text-xs sm:text-sm text-gray-400 mt-2 pl-6 leading-relaxed">
-              Room credentials are securely released to confirmed participants only, typically 15 minutes prior to match schedule. You can access the credentials directly in your Player Hub or on the tournament fixture match card.
+              Confirmed participants can see released credentials in their Player Hub or fixture card. Battle Royale may use one shared lobby; each 1v1, 2v2, 3v3, or 4v4 matchup has its own room ID and password, visible only to players assigned to that match.
             </p>
           </div>
 

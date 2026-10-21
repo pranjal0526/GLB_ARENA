@@ -955,7 +955,7 @@ export default function SecureAdminPortalPage() {
                 <div className="text-2xl font-black font-mono text-brand-400 mt-1">{tournaments.length}</div>
               </div>
               <div className="p-4 rounded-2xl bg-surface-100 border border-surface-border">
-                <div className="text-[10px] font-mono uppercase text-gray-400">Squad Entries</div>
+                <div className="text-[10px] font-mono uppercase text-gray-400">Tournament Entries</div>
                 <div className="text-2xl font-black font-mono text-cyanAccent-400 mt-1">{registrations.length}</div>
               </div>
               <div className={`p-4 rounded-2xl border ${pendingCount > 0 ? 'bg-amber-950/30 border-amber-500/50' : 'bg-surface-100 border-surface-border'}`}>
@@ -1328,19 +1328,29 @@ export default function SecureAdminPortalPage() {
                         <Pencil className="w-3.5 h-3.5" />
                         <span>Edit details</span>
                       </button>
-                      <button
-                        onClick={async () => {
-                          setAdminError(null);
-                          setReleaseRoomModal(t);
-                          const credentials = await getTournamentRoomCredentials(t.id);
-                          setCustomRoomId(credentials?.room_id || '');
-                          setCustomRoomPass(credentials?.room_password || '');
-                        }}
-                        className="px-3 py-1.5 rounded-lg bg-surface-200 hover:bg-surface-50 border border-surface-border text-cyanAccent-400 flex items-center gap-1.5 font-bold"
-                      >
-                        <Key className="w-3.5 h-3.5" />
-                        <span>Set Room & Pass</span>
-                      </button>
+                      {t.tournament_format === 'Battle Royale' ? (
+                        <button
+                          onClick={async () => {
+                            setAdminError(null);
+                            setReleaseRoomModal(t);
+                            const credentials = await getTournamentRoomCredentials(t.id);
+                            setCustomRoomId(credentials?.room_id || '');
+                            setCustomRoomPass(credentials?.room_password || '');
+                          }}
+                          className="px-3 py-1.5 rounded-lg bg-surface-200 hover:bg-surface-50 border border-surface-border text-cyanAccent-400 flex items-center gap-1.5 font-bold"
+                        >
+                          <Key className="w-3.5 h-3.5" />
+                          <span>Set shared lobby</span>
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => { setSelectedTournamentId(t.id); setActiveTab('fixtures'); setFixtureMatchView('active'); }}
+                          className="px-3 py-1.5 rounded-lg bg-surface-200 hover:bg-surface-50 border border-surface-border text-cyanAccent-400 flex items-center gap-1.5 font-bold"
+                        >
+                          <Key className="w-3.5 h-3.5" />
+                          <span>Set room per match</span>
+                        </button>
+                      )}
                       {tournamentListView === 'archive' && (
                         <button
                           type="button"
@@ -1393,7 +1403,7 @@ export default function SecureAdminPortalPage() {
               </div>
               <div className="rounded-xl bg-surface-200 px-4 py-3 text-xs text-gray-300">
                 {isKnockoutTournament
-                  ? 'Knockout: generate the first round, add room details, enter scores and mark one winner per match. Once every match is scored, create the next round from those winners.'
+                  ? `Head-to-head: each fixture pairs two entrants. An entrant is one player for 1v1, or one complete ${currentTourney?.mode || 'team'} roster for 2v2, 3v3, or 4v4. Set a different room ID and password on each match card; only players assigned to that matchup can see them. Score each match, then create the next round from its winners.`
                   : 'Battle Royale: create a lobby for all confirmed entries, add its room details, then enter placements and kills. Add another lobby for each additional map or match.'}
               </div>
             </section>
@@ -1478,7 +1488,7 @@ export default function SecureAdminPortalPage() {
               <div className="p-4 rounded-2xl bg-surface-200/50 border border-surface-border space-y-2">
                 <div className="text-xs font-mono text-gray-400 uppercase font-bold flex items-center justify-between">
                   <span>Confirmed entries for this tournament ({tourneyConfirmedRegs.length}):</span>
-                  <span className="text-emerald-400">Only these squads receive Room ID & Password</span>
+                  <span className="text-emerald-400">Only entrants assigned to a fixture can see that fixture’s released room details</span>
                 </div>
                 <div className="flex flex-wrap gap-2 pt-1 font-mono text-xs">
                   {tourneyConfirmedRegs.map((reg, idx) => (
@@ -1487,7 +1497,7 @@ export default function SecureAdminPortalPage() {
                       className="px-2.5 py-1 rounded-lg bg-surface-100 border border-surface-border text-white flex items-center gap-1.5"
                     >
                       <strong className="text-cyanAccent-400">Slot #{reg.slot_number || idx + 1}:</strong>
-                      <span>{reg.team_name}</span>
+                      <span>{reg.team_name || (currentTourney?.team_size === 1 ? reg.captain?.display_name || reg.members?.[0]?.ign || 'Solo player' : 'Team')}</span>
                     </span>
                   ))}
                   {tourneyConfirmedRegs.length === 0 && (
@@ -1531,13 +1541,18 @@ export default function SecureAdminPortalPage() {
                     <div className="flex items-center justify-between border-b border-surface-border pb-3">
                       <div>
                         <h4 className="font-display font-bold text-white text-base">
-                          {currentTourney?.tournament_format === 'Battle Royale' ? `Match ${matchDisplayNumbers.get(m.id)}` : m.round_label}
+                          {currentTourney?.tournament_format === 'Battle Royale'
+                            ? `Match ${matchDisplayNumbers.get(m.id)}`
+                            : `${m.round_label} · Match ${m.match_number}`}
                         </h4>
                         <div className="text-xs font-mono text-cyanAccent-400">
                           {currentTourney?.tournament_format === 'Battle Royale'
                             ? getBattleRoyaleLobbyDescription(m.round_label)
                             : `Format: ${m.format}`}
                         </div>
+                        {currentTourney?.tournament_format === 'Single Elimination' && m.participants?.length === 1 && (
+                          <div className="mt-1 text-[10px] font-mono text-amber-300">BYE · advances automatically · no room needed</div>
+                        )}
                       </div>
                       <StatusBadge status={m.status} size="sm" />
                     </div>
@@ -1572,10 +1587,13 @@ export default function SecureAdminPortalPage() {
                         <div key={idx} className="p-2.5 rounded-xl bg-surface-200 flex items-center justify-between">
                           <div className="flex items-center gap-2">
                             <span className="text-gray-500 font-bold">Slot #{p.participant_slot || idx + 1}</span>
-                            <span className="text-white font-semibold">{p.registration?.team_name || 'Squad'}</span>
+                            <span className="text-white font-semibold">{p.registration?.team_name || (currentTourney?.team_size === 1 ? p.registration?.captain?.display_name || p.registration?.members?.[0]?.ign || 'Player' : 'Team')}</span>
+                            {currentTourney?.team_size && currentTourney.team_size > 1 && p.registration?.members?.length ? (
+                              <span className="text-gray-500">· {p.registration.members.map((member) => member.ign).join(', ')}</span>
+                            ) : null}
                             {p.is_winner && (
                               <span className="text-[10px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded font-bold">
-                                WWCD
+                                {currentTourney?.tournament_format === 'Battle Royale' ? 'WWCD' : 'ADVANCES'}
                               </span>
                             )}
                           </div>
@@ -2078,7 +2096,17 @@ export default function SecureAdminPortalPage() {
           <div className="bg-surface-100 border border-surface-border rounded-3xl p-6 max-w-md w-full space-y-4">
             <div>
               <h3 className="font-display font-bold text-white text-lg">Set lobby room details</h3>
-              <p className="text-xs text-gray-400 mt-1">{releaseMatchModal.round_label} · {tournaments.find((tournament) => tournament.id === releaseMatchModal.tournament_id)?.game}</p>
+              <p className="text-xs text-gray-400 mt-1">Round {releaseMatchModal.round_number} · Match {releaseMatchModal.match_number} · {releaseMatchModal.round_label} · {tournaments.find((tournament) => tournament.id === releaseMatchModal.tournament_id)?.game}</p>
+            </div>
+            <div className="rounded-xl border border-cyanAccent-500/20 bg-cyanAccent-950/10 px-3 py-2.5 text-xs leading-relaxed text-cyanAccent-100">
+              These credentials belong only to this fixture. Confirmed players in this matchup can see them; other matches use their own room ID and password.
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {(releaseMatchModal.participants || []).map((participant) => (
+                <span key={participant.registration_id} className="rounded-lg bg-surface-200 px-2.5 py-1.5 text-[11px] text-gray-200">
+                  {participant.registration?.team_name || participant.registration?.captain?.display_name || participant.registration?.members?.[0]?.ign || 'Player'}
+                </span>
+              ))}
             </div>
             <div>
               <label className="block text-xs font-mono uppercase text-gray-400 mb-1">Room ID</label>
@@ -2091,7 +2119,7 @@ export default function SecureAdminPortalPage() {
             {adminError && <div role="alert" className="rounded-xl border border-rose-500/30 bg-rose-950/30 px-4 py-3 text-xs text-rose-200">{adminError}</div>}
             <div className="flex justify-end gap-2">
               <button onClick={() => { setReleaseMatchModal(null); setAdminError(null); }} className="px-4 py-2 rounded-lg bg-surface-200 text-xs text-gray-300">Cancel</button>
-              <button onClick={handleSaveMatchRoomCredentials} className="px-4 py-2 rounded-lg bg-cyanAccent-600 text-white font-bold text-xs">Save & release to confirmed players</button>
+              <button onClick={handleSaveMatchRoomCredentials} className="px-4 py-2 rounded-lg bg-cyanAccent-600 text-white font-bold text-xs">Save & release to this match</button>
             </div>
           </div>
         </div>
@@ -2427,16 +2455,24 @@ export default function SecureAdminPortalPage() {
                     onChange={(e) => {
                       const mode = e.target.value as TournamentMode;
                       setNewMode(mode);
-                      setNewTeamSize(mode === 'Squad' ? '4' : mode === 'Duo' ? '2' : '1');
+                      const modeTeamSizes: Record<TournamentMode, string> = {
+                        Solo: '1', '1v1': '1', '2v2': '2', '3v3': '3', '4v4': '4', Duo: '2', Squad: '4',
+                      };
+                      setNewTeamSize(modeTeamSizes[mode]);
+                      setNewFormat(['1v1', '2v2', '3v3', '4v4'].includes(mode) ? 'Single Elimination' : 'Battle Royale');
                     }}
                     disabled={editingHasEntries}
                     className="w-full px-3 py-2 rounded-xl bg-surface-200 border border-surface-border text-white"
                   >
                     <option value="Squad">Squad (4 players)</option>
-                    <option value="1v1">1v1 Arena</option>
-                    <option value="Solo">Solo</option>
+                    <option value="1v1">1v1 Arena (individual players)</option>
+                    <option value="2v2">2v2 Arena (teams of 2)</option>
+                    <option value="3v3">3v3 Arena (teams of 3)</option>
+                    <option value="4v4">4v4 Arena (teams of 4)</option>
+                    <option value="Solo">Solo Battle Royale</option>
                     <option value="Duo">Duo (2 players)</option>
                   </select>
+                  <p className="mt-1 text-[11px] text-gray-500">Squad means four players competing together in Battle Royale. 4v4 means two four-player teams face each other in separate arena fixtures.</p>
                 </div>
                 <div>
                   <label className="block text-gray-400 uppercase mb-1">Format</label>
@@ -2446,8 +2482,8 @@ export default function SecureAdminPortalPage() {
                     disabled={editingHasEntries}
                     className="w-full px-3 py-2 rounded-xl bg-surface-200 border border-surface-border text-white"
                   >
-                    <option value="Battle Royale">Battle Royale lobbies</option>
-                    <option value="Single Elimination">Single Elimination knockout</option>
+                    <option value="Battle Royale" disabled={['1v1', '2v2', '3v3', '4v4'].includes(newMode)}>Battle Royale lobbies</option>
+                    <option value="Single Elimination" disabled={!['1v1', '2v2', '3v3', '4v4'].includes(newMode)}>Single Elimination head-to-head</option>
                   </select>
                 </div>
               </div>
@@ -2498,8 +2534,9 @@ export default function SecureAdminPortalPage() {
                     <input type="number" min="0" step="0.01" value={newPrizePoolInr} onChange={(e) => setNewPrizePoolInr(e.target.value)} required className="w-full px-3 py-2 rounded-xl bg-surface-100 border border-surface-border text-white" />
                   </div>
                   <div>
-                    <label className="block text-gray-400 uppercase mb-1">Team / player slots</label>
+                    <label className="block text-gray-400 uppercase mb-1">Team / player entries</label>
                     <input type="number" min={Math.max(1, editingTournament?.registered_count || 0)} step="1" value={newMaxSlots} onChange={(e) => setNewMaxSlots(e.target.value)} required className="w-full px-3 py-2 rounded-xl bg-surface-100 border border-surface-border text-white" />
+                    <p className="mt-1 text-[10px] text-gray-500">Arena capacity counts players for 1v1 and complete teams for 2v2–4v4. Each match pairs two entries.</p>
                   </div>
                 </div>
                 <div className="flex items-center justify-between gap-3 pt-1">

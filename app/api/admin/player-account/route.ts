@@ -50,12 +50,14 @@ export async function GET(request: NextRequest) {
   if (!profile) return NextResponse.json({ error: 'Player account not found.' }, { status: 404 });
   if (authError || !authResult.user) return NextResponse.json({ error: authError?.message || 'Auth account not found.' }, { status: 404 });
 
-  const [ratings, registrations, memberships, verifications, profileEvents, accountAudit, contact] = await Promise.all([
+  const [ratings, registrations, memberships, departures, verifications, profileEvents, accountAudit, contact] = await Promise.all([
     context.admin.from('rating_events').select('*').eq('player_id', playerId).order('created_at', { ascending: true }).limit(1000),
     context.admin.from('registrations').select('id,tournament_id,team_name,registration_code,status,slot_number,created_at,updated_at,tournament:tournaments(title,status)')
       .eq('captain_id', playerId).order('created_at', { ascending: false }).limit(500),
     context.admin.from('registration_members').select('id,registration_id,ign,uid,role,created_at,registration:registrations(id,team_name,status,created_at,tournament:tournaments(title,status))')
       .eq('player_id', playerId).order('created_at', { ascending: false }).limit(500),
+    context.admin.from('registration_team_member_departures').select('id,registration_id,tournament_id,team_name,ign,uid,former_role,departed_at')
+      .eq('player_id', playerId).order('departed_at', { ascending: false }).limit(500),
     context.admin.from('player_game_id_verifications').select('id,game,game_ign,game_uid,status,reviewer_note,submitted_at,reviewed_at')
       .eq('player_id', playerId).order('submitted_at', { ascending: false }).limit(200),
     context.admin.from('player_profile_events').select('id,event_type,changed_fields,before_values,after_values,actor_id,created_at')
@@ -65,8 +67,14 @@ export async function GET(request: NextRequest) {
     context.admin.from('player_contact_details').select('phone_number,created_at,updated_at').eq('player_id', playerId).maybeSingle(),
   ]);
 
-  const queryErrors = [ratings.error, registrations.error, memberships.error, verifications.error, profileEvents.error, accountAudit.error, contact.error].filter(Boolean);
+  const queryErrors = [ratings.error, registrations.error, memberships.error, departures.error, verifications.error, profileEvents.error, accountAudit.error, contact.error].filter(Boolean);
   if (queryErrors.length) return NextResponse.json({ error: queryErrors[0]?.message }, { status: 500 });
+  const departureTournamentIds = [...new Set((departures.data || []).map((entry) => entry.tournament_id))];
+  const departureTournaments = departureTournamentIds.length
+    ? await context.admin.from('tournaments').select('id,title').in('id', departureTournamentIds)
+    : { data: [], error: null };
+  if (departureTournaments.error) return NextResponse.json({ error: departureTournaments.error.message }, { status: 500 });
+  const departureTournamentNames = new Map((departureTournaments.data || []).map((tournament) => [tournament.id, tournament.title]));
   return NextResponse.json({
     profile,
     contact: contact.data || null,
@@ -79,6 +87,10 @@ export async function GET(request: NextRequest) {
     ratings: ratings.data || [],
     registrations: registrations.data || [],
     team_entries: memberships.data || [],
+    team_departures: (departures.data || []).map((entry) => ({
+      ...entry,
+      tournament_title: departureTournamentNames.get(entry.tournament_id) || null,
+    })),
     verifications: verifications.data || [],
     profile_events: profileEvents.data || [],
     audit_events: accountAudit.data || [],
@@ -112,6 +124,11 @@ export async function DELETE(request: NextRequest) {
   const { error: rosterError } = await context.admin.from('registration_members')
     .update({ ign: 'Deleted player', uid: '', role: 'member' }).eq('player_id', playerId);
   if (rosterError) return NextResponse.json({ error: `Could not anonymize old squad records; account was not deleted. ${rosterError.message}` }, { status: 500 });
+
+  const { error: departureHistoryError } = await context.admin.from('registration_team_member_departures')
+    .update({ player_id: null, display_name: 'Deleted player', username: null, ign: 'Deleted player', uid: '' })
+    .eq('player_id', playerId);
+  if (departureHistoryError) return NextResponse.json({ error: `Could not anonymize previous team records; account was not deleted. ${departureHistoryError.message}` }, { status: 500 });
 
   const { error: deleteError } = await context.admin.auth.admin.deleteUser(playerId);
   if (deleteError) return NextResponse.json({ error: deleteError.message }, { status: 500 });
